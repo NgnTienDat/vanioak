@@ -23,6 +23,8 @@ flowchart LR
 
     RQ -. "transient retry" .-> RRQ["raw.retry.queue"]
     RRQ -. "after delay" .-> RQ
+    AQ -. "transient retry" .-> ARQ["alert.retry.queue"]
+    ARQ -. "after delay via critical.exchange" .-> AQ
 ```
 
 ## 2. Exchanges and Queues
@@ -34,7 +36,7 @@ flowchart LR
 | `critical.exchange` | `alert.queue` | Alert |
 | `dead-letter.exchange` | `dead-letter.queue` | permanently failed message inspection |
 
-`raw.retry.queue` provides delayed retry for transient processing failures.
+`raw.retry.queue` provides delayed retry for transient processing failures. `alert.retry.queue` provides the equivalent delayed retry path for `alert.queue`, returning through `critical.exchange` with routing key `critical.log`. Both retry queues are durable and transfers preserve the original envelope/payload and `event_id`.
 
 Suggested routing keys:
 
@@ -61,11 +63,15 @@ sequenceDiagram
     I-->>I: Return HTTP 202
 ```
 
-No publisher confirmation means no successful ingestion response.
+Use durable exchanges/queues and persistent messages. Return ingestion success only after publisher confirmation and successful routing to `raw.queue`; unroutable publications fail ingestion. Retry/DLQ transfers require confirmed routing before ACKing the original message.
 
 ### Processing
 
 A raw message is ACKed only after its required durable work for that processing attempt is safely accounted for: ClickHouse persistence and required processed/critical publication. Failures enter the retry/DLQ policy instead of being silently ACKed.
+
+### Alert
+
+Successful Alert ACK follows [Failure Handling](failure-handling.md#alert-accounting-and-redelivery), independently of Telegram/SSE delivery. Failed attempts use confirmed retry/DLQ transfer before ACKing their original delivery.
 
 ## 4. At-Least-Once
 
@@ -86,6 +92,8 @@ Suggested configurable retry schedule:
 ```
 
 Permanent validation failures go directly to DLQ. Transient failures are retried; after the configured retry policy is exhausted, the message must remain explicitly accounted for rather than silently dropped.
+
+For `alert.queue`, transient Redis/PostgreSQL/consumer failures use `alert.retry.queue` with the same suggested delays and the retry bound defined in [Configuration](../operations/configuration.md#6-alerting). Permanently unprocessable critical events go directly to `dead-letter.exchange` / `dead-letter.queue`; exhausted transient attempts go there with reason `ALERT_RETRY_EXHAUSTED`. Preserve the original critical envelope in the DLQ payload's `original_message` for inspection/recovery. Missing/disabled rules are accounted no-ops, not permanent errors. If retry/DLQ routing or confirmation fails, do not ACK the original; retain it for broker redelivery.
 
 The original message is considered handled only after successful retry/DLQ accounting.
 

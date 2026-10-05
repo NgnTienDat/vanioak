@@ -4,21 +4,14 @@
 
 The system is a **Modular Monolith** built with Java + Spring Boot for `dev`, `test`, and `staging`.
 
-Core goals:
-- ingest up to the design target of 1,000 logs/second;
-- buffer ingestion with RabbitMQ;
-- store logs in ClickHouse;
-- search logs through REST APIs;
-- stream logs/incidents through SSE;
-- detect and deduplicate ERROR/CRITICAL incidents;
-- retain logs for 7 days.
+Product goals and targets are defined in [MVP Scope](../product/mvp-scope.md) and [Non-Functional Requirements](../product/non-functional-requirements.md).
 
 Logical modules:
 - Identity
 - Ingestion
 - Processing 
 - Alert
-- Realtime
+- Realtime  
 - Analysis
 - Retention
 
@@ -105,7 +98,7 @@ Redis is not a source of truth for persistent logs or relational state.
 | Processing | normalize, batch-persist, publish processed/critical events |
 | Alert | evaluate rules, deduplicate, manage incidents, notify |
 | Realtime | authorized SSE delivery |
-| Analysis | ClickHouse analytics queries |
+| Analysis | ClickHouse read/query owner: Log Search and Health Analytics |
 | Retention | enforce 7-day ClickHouse log retention |
 
 Detailed module contracts belong in `docs/modules/`.
@@ -114,7 +107,7 @@ Detailed module contracts belong in `docs/modules/`.
 
 1. Ingestion never writes logs directly to ClickHouse/PostgreSQL.
 2. Ingestion returns `202` only after RabbitMQ publisher confirmation.
-3. Processing flushes at 1,000 logs or 2 seconds, whichever comes first.
+3. Processing uses the batch-flush policy defined in [Processing Module](../modules/03-processing.md).
 4. Delivery semantics are at-least-once; `event_id` remains stable across retry/redelivery.
 5. ClickHouse is the source of truth for logs.
 6. PostgreSQL is the source of truth for relational/configuration/Incident state.

@@ -6,7 +6,7 @@ Phân hệ Ma trận Tiếp nhận Luồng Log (High-Speed Ingestion Matrix): Th
 
 Phân hệ Engine Chuẩn hóa & Bộ lọc Sự cố (Log Parsing & Filtering Engine): Các Worker consume dữ liệu từ Message Queue, thực hiện bóc tách ký tự, làm sạch dữ liệu và thực hiện lưu trữ xuống DB. Nếu Worker phát hiện bản ghi log có chứa Level là ERROR hoặc CRITICAL, hệ thống lập tức kích hoạt một Event cảnh báo nguy cấp chuyển sang hàng đợi ưu tiên.
 
-Phân hệ Điều phối Cảnh báo & Khóa Trùng (Alert Locking Mechanism): Khi nhận được Event lỗi nguy cấp, hệ thống tự động đẩy thông báo thời gian thực qua WebSocket lên màn hình giám sát của kỹ sư vận hành và gửi tin nhắn về Telegram. Áp dụng cơ chế khóa trùng cảnh báo (Alert Deduplication) bằng Redis: Nếu một lỗi xuất hiện liên tiếp 100 lần trong 1 phút, hệ thống chỉ phát 1 thông báo duy nhất nhằm tránh gây tràn ngập (Alert Fatigue) cho kỹ sư.
+Phân hệ Điều phối Cảnh báo & Khóa Trùng (Alert Locking Mechanism): Khi nhận được Event lỗi nguy cấp, hệ thống tự động đẩy thông báo thời gian thực qua SSE lên màn hình giám sát của kỹ sư vận hành và gửi tin nhắn về Telegram. Áp dụng cơ chế khóa trùng cảnh báo (Alert Deduplication) bằng Redis: Nếu một lỗi xuất hiện liên tiếp 100 lần trong 1 phút, hệ thống chỉ phát 1 thông báo duy nhất nhằm tránh gây tràn ngập (Alert Fatigue) cho kỹ sư.
 
 Phân hệ Quản trị trực quan (Real-time Log Viewer): Giao diện màn hình hiển thị luồng log chạy liên tục theo thời gian thực (Live Stream View), hỗ trợ bộ lọc nhanh theo loại ứng dụng hoặc cấp độ lỗi mà không cần reload trang.
 
@@ -19,7 +19,7 @@ Tính năng bổ sung: Phân quyền hiển thị (Kỹ sư chỉ xem được l
 
 Đầy đủ chức năng yêu cầu theo các phân hệ đã mô tả.
 
-Demo một quy trình đơn giản: Giả lập chạy tool bắn 500 log liên tục trong 2 giây vào hệ thống -> Hệ thống tiếp nhận không lỗi -> Giao diện admin hiển thị log đổ về mượt mà.
+Demo một quy trình đơn giản: Giả lập chạy tool bắn 1000 log liên tục trong 1 giây vào hệ thống -> Hệ thống tiếp nhận không lỗi -> Giao diện admin hiển thị log đổ về mượt mà.
 
 Điểm cộng:
 

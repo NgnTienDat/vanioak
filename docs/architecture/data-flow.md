@@ -7,7 +7,7 @@ flowchart LR
     APP["Application"] -->|"POST JSON + API Key"| ING["Ingestion"]
     ING --> RE["raw.exchange"]
     RE --> RQ["raw.queue"] 
-    RQ --> PROC["Processing"]
+    RQ --> PROC["Processing"] 
 
     PROC -->|"batch insert"| CH[("ClickHouse")]
     PROC --> PE["processed.exchange"] 
@@ -62,24 +62,14 @@ flowchart TD
     V -->|"Permanent error"| DLQ["DLQ flow"]
     V -->|"Yes"| N["Normalize"]
     N --> B["Batch"]
-    B --> F{"1,000 logs OR 2 seconds?"}
+    B --> F{"Batch flush due?"}
     F -->|"No"| B
     F -->|"Yes"| CH[("ClickHouse")]
     CH -->|"Success"| PUB["Publish processed event + critical event when ERROR/CRITICAL"]
     CH -->|"Transient failure"| RETRY["Retry flow"]
 ```
 
-Canonical stored log context includes:
-- `event_id`
-- `application_id`
-- `environment_id`
-- `host_ip`
-- `level`
-- `message`
-- `timestamp`
-- `trace_id`
-- `metadata`
-- ingestion/processing timestamps
+The flush policy is defined in [Processing Module](../modules/03-processing.md). Canonical event and stored-log shapes are defined in [Event Contracts](../contracts/event-contracts.md) and [ClickHouse Schema](../contracts/clickhouse-schema.sql).
 
 Permanent data errors go to DLQ and are not application incidents.
 
@@ -94,20 +84,30 @@ sequenceDiagram
     participant T as Telegram
     participant RT as Realtime
 
-    Q->>A: Critical event
-    A->>P: Load applicable rule
-    A->>R: Atomic threshold/dedup check
-    alt Threshold not reached
-        A->>Q: ACK
-    else Threshold reached
-        A->>P: Create/update Incident
-        A->>T: Notify according to cooldown
-        A->>RT: Incident event
-        A->>Q: ACK after safe accounting
+    Q->>A: Critical event (stable event_id)
+    A->>P: Check receipt under scope lock
+    alt Already committed receipt
+        A->>Q: ACK without recounting or changing state
+    else Unseen event
+        A->>R: Reconcile frequency and evaluate rule
+        Note over A,P: Account below-threshold events; update matching OPEN Incident even below threshold
+        A->>P: Persist receipt and required Incident/notification state in one transaction
+        alt Safe accounting committed
+            P-->>A: Commit confirmed
+            A->>Q: ACK
+            opt Notification work reserved
+                A-->>T: Deliver/retry committed notification independently
+            end
+            opt Incident lifecycle changed
+                A-->>RT: Best-effort Incident event
+            end
+        else Transient failure before safe accounting
+            A->>A: Retry same event_id; no ACK before safe accounting or transfer
+        end
     end
 ```
 
-Matching errors with the same fingerprint update the active Incident. Resolution occurs after the configured `resolve_after` period without matching errors.
+Detailed receipt persistence, redelivery without double-counting, and confirmed retry/DLQ transfer rules are defined in [Alert accounting and redelivery](failure-handling.md#alert-accounting-and-redelivery). Matching errors update the active Incident; resolution follows the configured `resolve_after` period without matching errors.
 
 ## 5. Realtime Flow
 
@@ -128,19 +128,11 @@ Realtime is best-effort. Historical logs are recovered through REST search.
 ```mermaid
 flowchart LR
     UI["Dashboard"] --> API["Backend API"]
-    API --> SEARCH["Log Search"] --> CH[("ClickHouse")]
-    API --> AN["Analysis"] --> CH
+    API -->|"Log Search / Health Analytics"| AN["Analysis"]
+    AN --> CH[("ClickHouse")]
 ```
 
-Search filters: application, environment, level, time range, trace_id, and message. Pagination is cursor-based.
-
-MVP analytics:
-- total logs;
-- ERROR count;
-- CRITICAL count;
-- Log Error Rate;
-
-grouped by application, environment, and hour.
+Search behavior and analytics metrics are defined in FR04 and FR08 of [Functional Requirements](../product/functional-requirements.md).
 
 ## 7. Retention
 

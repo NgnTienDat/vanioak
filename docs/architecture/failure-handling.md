@@ -24,7 +24,7 @@
 | PostgreSQL unavailable during alert processing | Retry/keep critical event pending |
 | Redis unavailable during alert processing | Retry critical event; do not bypass dedup |
 | Telegram unavailable | Keep Incident persisted; retry notification |
-| Realtime/SSE unavailable | Storage continues; client reconnects or uses REST search |
+| Realtime/SSE unavailable | Storage continues; client reconnects or uses REST search | 
 
 ## 3. RabbitMQ Failure / Backpressure
 
@@ -43,7 +43,7 @@ Ingestion must not return `202` without publisher confirmation and must not buff
 
 ## 4. ClickHouse / Processing Failure
 
-Processing flushes at 1,000 logs or 2 seconds.
+Temporary ClickHouse unavailability and RabbitMQ communication failures or publish timeouts are transient processing failures.
 
 ```mermaid
 flowchart LR
@@ -57,7 +57,7 @@ A failed batch is not treated as successful. Stable `event_id` values are reused
 
 ## 5. Invalid Logs
 
-Permanent validation failures such as missing required fields, unsupported level, invalid timestamp, or unrecoverable schema mismatch are routed to the DLQ.
+Permanent validation failures such as malformed payloads, missing required fields, unsupported level, invalid timestamp, or unrecoverable schema mismatch are routed to the DLQ.
 
 They are data-quality failures, not application ERROR/CRITICAL incidents.
 
@@ -70,6 +70,17 @@ Requirements:
 - tolerate duplicate log processing;
 - make Incident state transitions/dedup safe against redelivery;
 - notification retry must not recreate the Incident.
+
+### Alert accounting and redelivery
+
+Alert's durable accounting uses `alert_event_receipts` in [PostgreSQL Schema](../contracts/postgres-schema.sql); decisions follow [Alert semantics](../modules/04-alert.md#deterministic-semantics).
+
+1. Serialize evaluation/update/resolution for each `(environment_id, fingerprint)` using a PostgreSQL scope lock, including when no Incident exists. Inside the transaction, check the receipt by `event_id` first. An existing committed receipt is complete accounting: do not change frequency, Incident count, or notification reservations; ACK safely.
+2. For an unseen event with an enabled rule, reconcile Redis frequency membership against committed receipts for that rule/scope plus this tentative event before evaluating. Use `event_id` as the unique member and immutable `received_at` as its score. Remove orphan tentative entries from failed attempts and restore missing committed entries after expiry/restart; Redis-only seen flags must never suppress PostgreSQL work. Without an enabled rule, persist a receipt with no rule/Incident association and no frequency contribution.
+3. Commit the receipt, required Incident/count/lifecycle changes, window-event associations on opening, and any PENDING notification reservation in one PostgreSQL transaction. The receipt is the fully processed marker; a Redis operation is only tentative until that commit. Retain receipts in MVP independently of 7-day ClickHouse retention so later redelivery cannot be counted again. They contain accounting identifiers/times, not log bodies.
+4. If PostgreSQL fails after Redis changes, roll back and retry with the same `event_id`; reconciliation resumes evaluation without counting the tentative member twice. If commit succeeds but the consumer crashes before ACK or Redis completion bookkeeping, redelivery finds the receipt and performs no second durable update. Do not mark successfully processed or ACK before commit; failed attempts may ACK only after the confirmed retry/DLQ transfer in [Topology](rabbitmq-topology.md#5-retry-and-dlq).
+
+Redis remains operational state; PostgreSQL owns durable Incident/accounting state. Redis failure still requires retry, not bypass. Telegram delivery runs from committed notification work and retries that same work independently; a timeout after Telegram accepts a send can produce a duplicate delivery under at-least-once semantics. Realtime remains best-effort and does not gate accounting. No distributed transaction or exactly-once transport guarantee is introduced.
 
 ## 7. PostgreSQL / Redis Failure
 
