@@ -102,6 +102,18 @@ For Alert processing:
 - PostgreSQL unavailable -> retry/keep event pending because Incident state cannot be safely persisted.
 - Redis unavailable -> retry critical event; never send every ERROR/CRITICAL directly to Telegram.
 
+### Human authentication failures
+
+These rules are separate from the API-key cache fallback above:
+
+- Missing, invalid, expired or blacklisted access token, or a missing current user -> controlled `401`.
+- Disabled user on protected REST or insufficient permissions -> controlled `403`; disabled login/refresh -> `401`.
+- Redis unavailable or blacklist state unverifiable during protected authentication -> fail closed with a safe `500`; never silently bypass or substitute a cache/DB fallback.
+- PostgreSQL unavailable while resolving current user/role/status or refresh metadata -> fail closed with a safe `500`.
+- Refresh reuse -> `401` and committed refresh-family revocation; concurrent rotation/revocation follows the [Identity lifecycle](../modules/01-identity.md#human-authentication-lifecycle).
+- Logout requiring access revocation must write the `jti` blacklist entry through the token's `exp` and commit refresh-session revocation before reporting success. Write the blacklist before committing refresh revocation; if either operation fails, return a safe `500`, retain any completed revocation and never undo it to restore access. PostgreSQL and Redis have no distributed transaction, so partial revocation may occur; failure must not be reported as successful logout.
+- Unexpected infrastructure/internal errors use `ApiResponse` with `success: false`, a generic safe message and `data: null`. Never expose internal exception messages, types, stack traces, tokens or secrets. Server-side diagnostics must not log credentials or raw tokens.
+
 ## 8. Telegram / Realtime Failure
 
 Telegram failure does not remove or recreate an Incident; notification is retried independently.

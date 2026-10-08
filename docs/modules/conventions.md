@@ -85,6 +85,20 @@ Because this is a modular monolith:
 - Analysis reads ClickHouse.
 - Retention manages ClickHouse retention.
 
+## Module Exceptions
+
+- Each module defines its business exception in `modules/<module>/api/`, for example `IdentityException`.
+- Module exceptions extend `RuntimeException` and expose a module-specific `ErrorCode`.
+- Each module-specific `ErrorCode` directly defines the Spring `HttpStatus` and client-safe message; it is the single source of business error metadata.
+- Services throw module exceptions with the corresponding `ErrorCode`, without creating client-facing messages in services; controllers do not catch them manually.
+- Each HTTP API area may provide a module-specific `@RestControllerAdvice` under `api/<module>/`.
+- Module exception handlers take status and message directly from `ErrorCode` and return the shared `ApiResponse<T>` envelope with `success: false` and `data: null`.
+- Validation errors and unexpected exceptions are handled by the global exception handler.
+- Unexpected `500` responses must use a safe generic message and must not expose internal exception details or stack traces.
+- Field validation returns `400`, message `Validation failed`, and a field-to-message map in `data` (empty when there are no field errors), without rejected values.
+- Log unexpected exception types and stack traces server-side without request bodies, exception messages that may contain secrets, credentials, tokens, or passwords.
+- Do not introduce a shared business-exception hierarchy unless multiple modules have a demonstrated need for it.
+
 ## Database migrations
 
 - Manage PostgreSQL schema changes with Flyway migrations under `backend/src/main/resources/db/migration/`.

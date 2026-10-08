@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+.local/
+backend/target/
+docs/plans/
