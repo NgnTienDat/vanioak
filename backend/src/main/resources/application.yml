@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: backend
+  datasource:
+    url: "${POSTGRES_URL}"
+    username: "${POSTGRES_USERNAME}"
+    password: "${POSTGRES_PASSWORD}"
+    hikari:
+      connection-timeout: "${POSTGRES_POOL_CONNECTION_TIMEOUT_MS:5000}"
+      validation-timeout: 3000
+      data-source-properties:
+        connectTimeout: "${POSTGRES_CONNECT_TIMEOUT_SECONDS:5}"
+        socketTimeout: "${POSTGRES_SOCKET_TIMEOUT_SECONDS:10}"
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  sql:
+    init:
+      mode: never
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+    baseline-on-migrate: false
+    clean-disabled: true
+  data:
+    redis:
+      host: "${REDIS_HOST:redis}"
+      port: "${REDIS_PORT:6379}"
+      connect-timeout: "${REDIS_CONNECT_TIMEOUT:5s}"
+      timeout: "${REDIS_COMMAND_TIMEOUT:5s}"
+      repositories:
+        enabled: false
+  rabbitmq:
+    host: "${RABBITMQ_HOST:rabbitmq}"
+    port: "${RABBITMQ_PORT:5672}"
+    username: "${RABBITMQ_USERNAME}"
+    password: "${RABBITMQ_PASSWORD}"
+    connection-timeout: "${RABBITMQ_CONNECT_TIMEOUT:5s}"
+    channel-rpc-timeout: "${RABBITMQ_CHANNEL_RPC_TIMEOUT:5s}"
+    dynamic: false
+  
+
+server:
+  port: "${SERVER_PORT:8080}"
+
+security:
+  jwt:
+    access-secret: "${JWT_ACCESS_SECRET}"
+    refresh-secret: "${JWT_REFRESH_SECRET}"
+    access-token-ttl: "${JWT_ACCESS_TOKEN_TTL}"
+    refresh-token-ttl: "${JWT_REFRESH_TOKEN_TTL}"
+
+springdoc:
+  packages-to-scan: com.h.vanioak.api
+  paths-to-match: /api/v1/**
+  api-docs:
+    enabled: "${SWAGGER_ENABLED:true}"
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: "${SWAGGER_ENABLED:true}"
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+
+vanioak:
+  identity:
+    api-key-cache-ttl: "${API_KEY_REDIS_CACHE_TTL:30s}"
+    bootstrap-admin:
+      enabled: "${BOOTSTRAP_ADMIN_ENABLED:false}"
+      username: "${BOOTSTRAP_ADMIN_USERNAME:}"
+      password: "${BOOTSTRAP_ADMIN_PASSWORD:}"
+  clickhouse:
+    url: "${CLICKHOUSE_URL}"
+    username: "${CLICKHOUSE_USERNAME}"
+    password: "${CLICKHOUSE_PASSWORD}"
+    connect-timeout: "${CLICKHOUSE_CONNECT_TIMEOUT:5s}"
+    request-timeout: "${CLICKHOUSE_REQUEST_TIMEOUT:5s}"
+

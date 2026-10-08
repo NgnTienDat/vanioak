@@ -8,6 +8,15 @@
 - Passwords must be stored using a strong one-way password hash.
 - Authentication secrets/tokens must never be logged.
 
+### Human token lifecycle
+
+- Login issues access and refresh JWTs using separate signing keys. Refresh JWTs are single-use, rotate within a session and have authoritative metadata in PostgreSQL; replay of a used token revokes its refresh family. See [Identity lifecycle](../modules/01-identity.md#human-authentication-lifecycle).
+- Logout revokes the current refresh session and, when a valid unexpired current access token is supplied for the same user, makes that access token unusable on subsequent protected requests. Other sessions remain active. Without a supplied valid access token, logout does not revoke previously issued access tokens.
+- Access-token revocation is authoritative Redis state keyed by JWT `jti`, retained only until the corresponding access token's `exp`. Never log or persist raw access/refresh JWTs; transmit them only through the defined token responses and request credentials.
+- Every protected request verifies the access JWT and checks its blacklist status before establishing authentication. Redis blacklist-check failure must fail closed; a valid signature alone is insufficient. Blacklist entries must not be evicted or cleared before expiry.
+- Every protected request loads current user role/status from PostgreSQL. Do not trust JWT role claims as the authorization source; a disabled user is denied on the next request. PostgreSQL lookup failure also fails closed.
+- Refresh rotation/replay controls future refresh; access blacklist controls individual access tokens. Neither rotation nor family revocation implicitly revokes access tokens.
+
 ### Log sources
 Applications authenticate to the Ingestion API using an API key.
 
@@ -69,7 +78,7 @@ The plaintext API key is returned only when it is created/rotated and must not b
 
 Never log:
 - passwords;
-- JWT/session secrets;
+- JWT/session secrets and raw access/refresh tokens;
 - plaintext API keys;
 - Telegram bot token; 
 - database credentials.

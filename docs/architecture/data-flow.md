@@ -11,7 +11,7 @@ flowchart LR
 
     PROC -->|"batch insert"| CH[("ClickHouse")]
     PROC --> PE["processed.exchange"] 
-    PE --> RTQ["realtime.queue"]
+    PE --> RTQ["realtime.queue"] 
     RTQ --> RT["Realtime"]
     RT -->|"SSE"| UI["Dashboard"]
 
@@ -84,25 +84,29 @@ sequenceDiagram
     participant T as Telegram
     participant RT as Realtime
 
-    Q->>A: Critical event (stable event_id)
+    Q->>A: Critical event with stable event_id
     A->>P: Check receipt under scope lock
+
     alt Already committed receipt
         A->>Q: ACK without recounting or changing state
     else Unseen event
         A->>R: Reconcile frequency and evaluate rule
-        Note over A,P: Account below-threshold events; update matching OPEN Incident even below threshold
-        A->>P: Persist receipt and required Incident/notification state in one transaction
+        Note over A,P: Account below-threshold events<br/>and update matching OPEN Incident even below threshold
+        A->>P: Persist receipt and required Incident or notification state in one transaction
+
         alt Safe accounting committed
             P-->>A: Commit confirmed
             A->>Q: ACK
+
             opt Notification work reserved
-                A-->>T: Deliver/retry committed notification independently
+                A-->>T: Deliver or retry committed notification independently
             end
+
             opt Incident lifecycle changed
                 A-->>RT: Best-effort Incident event
             end
         else Transient failure before safe accounting
-            A->>A: Retry same event_id; no ACK before safe accounting or transfer
+            A->>A: Retry same event_id without ACK
         end
     end
 ```

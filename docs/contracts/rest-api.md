@@ -1,327 +1,155 @@
-# REST API Contract v1
+# REST API Guide v1
 
-[OpenAPI](openapi.yaml) is the normative REST contract. This guide explains usage and behavior that is not conveniently expressed in its schemas.
+`openapi.yaml` is the authoritative REST contract.
+This document summarizes endpoint ownership, authorization, and important API behavior that is useful to human readers.
 
-## 1. API conventions
+These sections match the resource-oriented OpenAPI tags for readability. Architectural
+ownership remains unchanged: Auth, Users, Applications, and API Keys belong to Identity;
+Log Ingestion belongs to Ingestion; Log Search and Analytics belong to Analysis;
+Incidents and Alert Rules belong to Alert.
+
+## 1. Conventions
 
 - Base path: `/api/v1`
-- Content-Type: `application/json`
-- Timestamps: ISO-8601 UTC, e.g. `2026-10-02T08:00:00.123Z`
-- IDs: UUID strings
-- Pagination: opaque cursor pagination
-- Maximum page size: 100 records unless an endpoint states otherwise
-- Human-user APIs use `Authorization: Bearer <access_token>`
-- Log ingestion APIs use `X-API-Key: <application-api-key>`
-- API keys are scoped to exactly one environment; that environment belongs to one application.
-- Every REST response, including errors, uses the common `success`, `message`, `data` envelope defined in [OpenAPI](openapi.yaml).
+- JSON REST APIs use the common response envelope:
+  `{ success, message, data }`.
+- Errors set `success` to `false`. Field validation returns `400`, message
+  `Validation failed`, and a field-to-message map in `data` (empty when there are
+  no field errors), without rejected values.
+- Business error status and client-safe message come directly from the module's
+  `ErrorCode`; `data` is `null`. Unexpected errors return `500` with a generic safe
+  message and `data: null`. The `data` key is always present.
+- Human APIs use Bearer authentication unless the endpoint is public.
+- Ingestion uses `X-API-Key`.
+- Pagination uses opaque cursors.
+- SSE is documented separately in `sse-api.md`.
 
-Disabled-state behavior and its `401`/`403` outcomes follow [Security](../quality/security.md#disabled-state); disabling a scope does not delete its history. Input length violations defined in OpenAPI return `400` with the normal validation envelope before persistence.
+## 2. Auth
 
-### Error response
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| POST | `/auth/login` | Public | Authenticate and issue access + refresh tokens |
+| POST | `/auth/refresh` | Refresh token | Rotate refresh token and issue a new token pair |
+| POST | `/auth/logout` | Refresh token; optional Bearer access token | Revoke the current refresh session and supplied valid access token |
 
-```json
-{
-  "success": false,
-  "message": "The supplied API key is invalid",
-  "data": {
-    "code": "INVALID_API_KEY",
-    "request_id": "2bf6e2c8-...",
-    "details": {}
-  }
-}
-```
+Behavior:
+- Login issues a short-lived access JWT and a refresh JWT.
+- Refresh JWTs are single-use and rotate within the current session; reuse revokes that refresh session and returns `401`.
+- Refresh/logout authenticate `refresh_token` in the JSON body; no access token is required. Logout accepts the current access token through the optional Bearer header and revokes it if valid, unexpired and for the same user; a valid token for a different user returns `401`. An absent, invalid or expired access token does not block logout with a valid refresh token.
+- Logout revokes the current refresh session; other sessions remain active. A supplied valid access token cannot be reused after successful logout. Other access tokens remain subject to expiry and normal authorization checks; refresh rotation alone does not revoke them.
+- Disabled users cannot login or refresh. Protected requests use current user role/status.
 
-Rules:
+## 3. Users
 
-- `success` is always present and is `true` for successful responses, `false` for errors.
-- `message` is always present and is safe for client display/logging.
-- `data` is always present. Use an object, array, or `null` depending on the endpoint.
-- Do not introduce another top-level field such as `error`, `meta`, or `errors`.
-- Validation and business-error details belong under `data.details`.
-- `request_id` should be returned in `data` for error responses and preferably also in successful responses where useful for troubleshooting.
+ADMIN manages ENGINEER users only.
 
-## 2. Authentication
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/users` | List engineers |
+| POST | `/users` | Create engineer |
+| GET | `/users/{userId}` | Get engineer |
+| PATCH | `/users/{userId}` | Update engineer |
+| DELETE | `/users/{userId}` | Disable engineer |
 
-### POST `/api/v1/auth/login`
+`DELETE` is a soft delete and sets the user to `DISABLED`.
+ADMIN users are created outside these REST operations.
 
-Authenticate a human user.
+## 4. Applications
 
-Request and response shapes are `LoginRequest` and `LoginResponse` in [OpenAPI](openapi.yaml); the response supplies the Bearer token for human-user APIs.
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| GET | `/applications` | ADMIN / assigned ENGINEER | List visible applications |
+| POST | `/applications` | ADMIN | Create application |
+| PATCH | `/applications/{applicationId}` | ADMIN | Update application |
 
-Errors: `400`, `401`.
+Creating an application also creates exactly three environments:
+`DEV`, `TEST`, and `STAGING`.
 
-## 3. Applications and environments
+There is no REST API for creating or changing environments independently.
 
-### GET `/api/v1/applications`
+Environment IDs remain part of the model because ingestion credentials, logs,
+search, and alert rules are environment-scoped.
 
-Returns applications visible to the current user.
+### Engineer assignments
 
-- ADMIN: all applications.
-- ENGINEER: applications assigned through `user_application_access`.
+| Method | Path | Access |
+|---|---|---|
+| POST | `/applications/{applicationId}/engineers/{userId}` | ADMIN |
+| DELETE | `/applications/{applicationId}/engineers/{userId}` | ADMIN |
 
-Filters, pagination, and the application/environment response shape are defined for this operation in [OpenAPI](openapi.yaml).
+Assignments are application-scoped and grant access to all environments of the application.
 
-### POST `/api/v1/applications`
+## 5. API Keys
 
-ADMIN only.
+| Method | Path | Access |
+|---|---|---|
+| GET | `/applications/{applicationId}/environments/{environmentId}/api-keys` | ADMIN |
+| POST | `/applications/{applicationId}/environments/{environmentId}/api-keys` | ADMIN |
+| POST | `/api-keys/{credentialId}/rotate` | ADMIN |
+| DELETE | `/api-keys/{credentialId}` | ADMIN |
 
-Request and response shapes are `CreateApplicationRequest` and `ApplicationResponse` in [OpenAPI](openapi.yaml).
+API keys are scoped to one environment.
+Plaintext keys are returned only on create/rotate.
 
-### PATCH `/api/v1/applications/{applicationId}`
+## 6. Log Ingestion
 
-ADMIN only. Supports updating name/description/status.
+| Method | Path | Authentication |
+|---|---|---|
+| POST | `/logs` | API key |
+| POST | `/logs/batch` | API key |
 
-Response `200` follows the common envelope; `data` contains the updated application.
+A successful `202` means RabbitMQ has confirmed acceptance.
+It does not mean the log has already been persisted to ClickHouse.
 
-### POST `/api/v1/applications/{applicationId}/environments`
+Batch ingestion accepts at most 1,000 logs.
 
-ADMIN only.
+## 7. Log Search
 
-Request:
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/logs` | Search logs |
 
-```json
-{"name":"STAGING"}
-```
+ENGINEER queries are restricted to assigned applications.
 
-Allowed names in MVP: `DEV`, `TEST`, `STAGING`.
+Log search ordering is:
 
-Response `201` follows the common envelope; `data` contains the created environment.
+`timestamp DESC, event_id DESC`
 
-### PATCH `/api/v1/applications/{applicationId}/environments/{environmentId}`
-
-ADMIN only. Supports updating environment status (`ACTIVE|DISABLED`).
-
-### API key management
-
-ADMIN only.
-
-- `GET /api/v1/applications/{applicationId}/environments/{environmentId}/api-keys`
-  - lists credential metadata only; plaintext keys are never returned.
-- `POST /api/v1/applications/{applicationId}/environments/{environmentId}/api-keys`
-  - creates a credential; optional `expires_at`.
-  - response returns the plaintext `api_key` exactly once together with credential metadata.
-- `POST /api/v1/api-keys/{credentialId}/rotate`
-  - revokes/replaces the old credential and returns the new plaintext key exactly once.
-- `DELETE /api/v1/api-keys/{credentialId}`
-  - revokes the credential; no physical deletion is required.
-
-### POST `/api/v1/applications/{applicationId}/engineers/{userId}`
-
-ADMIN only. Assign an engineer to an application.
-
-Response `200` uses `ActionResponse` in [OpenAPI](openapi.yaml).
-
-### DELETE `/api/v1/applications/{applicationId}/engineers/{userId}`
-
-ADMIN only. Remove engineer access.
-
-Response `200` uses `ActionResponse` in [OpenAPI](openapi.yaml).
-
-## 4. Ingestion
-
-### POST `/api/v1/logs`
-
-Accept one structured log.
-
-Headers:
-
-```text
-X-API-Key: lm_...
-```
-
-Request:
-
-```json
-{
-  "application": "payment-service",
-  "environment": "STAGING",
-  "host_ip": "10.10.20.15",
-  "level": "ERROR",
-  "message": "Database connection timeout",
-  "timestamp": "2026-10-02T08:01:22.123Z",
-  "trace_id": "abc-123",
-  "metadata": {
-    "endpoint": "/api/payments",
-    "status_code": 500
-  }
-}
-```
-
-The application/environment in the payload are validated against the API-key scope. Lowercase environment aliases are normalized to canonical `DEV`, `TEST`, or `STAGING` before scope validation. The API key is authoritative.
-
-Response `202`:
-
-```json
-{
-  "success": true,
-  "message": "Log accepted for processing",
-  "data": {
-    "accepted": true,
-    "request_id": "2bf6e2c8-..."
-  }
-}
-```
-
-The response means the log was durably accepted by RabbitMQ publisher-confirm semantics; it does **not** mean it is already in ClickHouse.
-
-Errors:
-
-- `400` malformed/invalid request
-- `401` missing/invalid/revoked/expired API key
-- `403` authenticated credential but application/environment scope mismatch
-- `429` backpressure / queue capacity policy
-- `503` RabbitMQ unavailable
-
-### POST `/api/v1/logs/batch`
-
-Headers: `X-API-Key`
-
-Wrap the single-log input above in the `logs` array defined by `LogBatchInput` in [OpenAPI](openapi.yaml).
-
-MVP limit: 1,000 log records per request.
-
-Response `202`:
-
-```json
-{
-  "success": true,
-  "message": "Log batch accepted for processing",
-  "data": {
-    "accepted": true,
-    "accepted_count": 1,
-    "request_id": "2bf6e2c8-..."
-  }
-}
-```
-
-## 5. Log search
-
-### GET `/api/v1/logs`
-
-Query parameters and pagination limits are defined in [OpenAPI](openapi.yaml). `message` performs substring search; if `from` is supplied, `to` is required.
-
-Example:
-
-```text
-GET /api/v1/logs?application_id=a1...&environment_id=e3...&level=ERROR&from=2026-10-02T08:00:00Z&to=2026-10-02T09:00:00Z&cursor=eyJ...
-```
-
-Response `200` uses `LogListResponse` in [OpenAPI](openapi.yaml), with log items and the next cursor.
-
-Authorization is applied before returning results. An ENGINEER can only retrieve logs belonging to applications assigned to that engineer. Results are ordered by `timestamp DESC, event_id DESC`; cursors preserve this order and the original filters.
-
-## 6. Incidents
-
-### GET `/api/v1/incidents`
-
-Filters and pagination are defined for this operation in [OpenAPI](openapi.yaml).
-
-Response `200` uses the common envelope with `data.items` and `data.next_cursor`.
-
-### GET `/api/v1/incidents/{incidentId}`
-
-Returns incident details and recent incident events.
-
-Response `200` uses `IncidentResponse` in [OpenAPI](openapi.yaml), including recent incident events.
-
-## 7. Alert rules
-
-### GET `/api/v1/alert-rules`
-
-ADMIN only.
-
-Response `200` uses the common envelope.
-
-### POST `/api/v1/alert-rules`
-
-ADMIN only.
-
-Request:
-
-```json
-{
-  "environment_id": "e3...",
-  "level": "ERROR",
-  "threshold": 10,
-  "window_seconds": 60,
-  "cooldown_seconds": 300,
-  "resolve_after_seconds": 300,
-  "enabled": true
-}
-```
-
-Response `201` uses the common envelope; `data` contains the created rule.
-
-MVP rule uniqueness: one rule per `(environment, level)`; update/enable/disable that rule instead of creating duplicates.
-
-### PATCH `/api/v1/alert-rules/{ruleId}`
-
-ADMIN only. Response `200` uses the common envelope; `data` contains the updated rule.
-
-### DELETE `/api/v1/alert-rules/{ruleId}`
-
-ADMIN only; recommended behavior is disable rather than physical delete.
-
-Response `200` uses the common envelope; `data` contains the resulting rule state.
+Cursor pagination preserves that ordering and the original filters.
 
 ## 8. Analytics
 
-### GET `/api/v1/analytics/health`
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/analytics/health` | Hourly health analytics |
 
-Query parameters and the required time range are defined in [OpenAPI](openapi.yaml); the MVP bucket is hourly.
+ENGINEER queries are restricted to assigned applications.
 
-Response `200`:
+## 9. Incidents
 
-```json
-{
-  "success": true,
-  "message": "Health analytics retrieved successfully",
-  "data": {
-    "bucket": "hour",
-    "items": [
-      {
-        "application_id": "a1...",
-        "environment_id": "e3...",
-        "timestamp": "2026-10-02T08:00:00Z",
-        "total_logs": 100000,
-        "error_logs": 120,
-        "critical_logs": 2,
-        "log_error_rate": 0.00122
-      }
-    ]
-  }
-}
-```
+| Method | Path |
+|---|---|
+| GET | `/incidents` |
+| GET | `/incidents/{incidentId}` |
 
-## 9. Error codes
+ADMIN sees all incidents.
+ENGINEER sees incidents for assigned applications only.
 
-Recommended `data.code` values:
+## 10. Alert Rules
 
-- `INVALID_REQUEST`
-- `VALIDATION_ERROR`
-- `UNAUTHORIZED`
-- `FORBIDDEN`
-- `RESOURCE_NOT_FOUND`
-- `CONFLICT`
-- `INVALID_API_KEY`
-- `INGESTION_BACKPRESSURE`
-- `DEPENDENCY_UNAVAILABLE`
-- `INTERNAL_ERROR`
+| Method | Path | Access |
+|---|---|---|
+| GET | `/alert-rules` | ADMIN |
+| POST | `/alert-rules` | ADMIN |
+| PATCH | `/alert-rules/{ruleId}` | ADMIN |
+| DELETE | `/alert-rules/{ruleId}` | ADMIN |
 
-Validation errors use the error envelope shown above; field-level messages belong in `data.details`.
+Alert rules are scoped by environment and level.
 
-## 10. HTTP status summary
+## 11. Contract details
 
-- `200` successful read/update/action with a JSON response envelope
-- `201` resource created
-- `202` asynchronously accepted for processing
-- `400` validation error
-- `401` unauthenticated / invalid credential
-- `403` authenticated but not authorized
-- `404` resource not found
-- `409` state/conflict violation
-- `429` backpressure/rate limit
-- `500` unexpected server error
-- `503` dependency unavailable
+Exact request/response schemas, validation constraints, query parameters,
+HTTP status codes, security declarations, and payload field definitions are
+defined in `openapi.yaml`.
 
-There are no `204 No Content` responses in this API contract because every REST response must use the common JSON envelope.
+SSE behavior is defined in `sse-api.md`.

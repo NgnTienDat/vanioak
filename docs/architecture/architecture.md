@@ -7,7 +7,7 @@ The system is a **Modular Monolith** built with Java + Spring Boot for `dev`, `t
 Product goals and targets are defined in [MVP Scope](../product/mvp-scope.md) and [Non-Functional Requirements](../product/non-functional-requirements.md).
 
 Logical modules:
-- Identity
+- Identity 
 - Ingestion
 - Processing 
 - Alert
@@ -40,7 +40,7 @@ flowchart LR
 
     RT -->|"SSE"| FE["React Dashboard"]
 
-    FE -->|"REST"| API["Backend API"]
+    FE -->|"REST"| API["Backend API"] 
     API --> ID
     API --> AL
     API --> AN["Analysis"]
@@ -58,13 +58,13 @@ Exact RabbitMQ exchanges/queues are defined in `rabbitmq-topology.md`.
 
 | Area | Technology |
 |---|---|
-| Backend / Modules | Java 21+ / Spring Boot |
+| Backend / Modules | Java 21+ / Spring Boot / Spring Data JPA |
 | REST | Spring Web |
 | Security | Spring Security |
 | Message Queue | RabbitMQ |
 | Relational/config/state DB | PostgreSQL |
 | Log/analytics DB | ClickHouse |
-| Cache / alert dedup | Redis |
+| Cache / alert dedup / access-token revocation | Redis |
 | Frontend | React + TypeScript |
 | Realtime | SSE |
 | Notification | Telegram Bot API |
@@ -74,6 +74,7 @@ Exact RabbitMQ exchanges/queues are defined in `rabbitmq-topology.md`.
 
 **PostgreSQL**
 - users and application access;
+- authoritative refresh JWT/session rotation metadata;
 - applications and environments;
 - API-key metadata;
 - alert rules;
@@ -83,11 +84,12 @@ Exact RabbitMQ exchanges/queues are defined in `rabbitmq-topology.md`.
 - normalized log records and analytics source data.
 
 **Redis**
+- authoritative access-token blacklist by JWT `jti` until token expiry (no raw JWTs; no bypass);
 - API-key cache;
 - alert-rule cache where used;
 - alert frequency/dedup/cooldown state.
 
-Redis is not a source of truth for persistent logs or relational state.
+Redis is authoritative for access-token revocation until expiry; it is not a source of truth for persistent logs or relational state. Refresh-session metadata remains authoritative in PostgreSQL.
 
 ## 5. Module Boundaries
 

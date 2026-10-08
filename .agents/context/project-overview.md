@@ -15,7 +15,7 @@ Follow `docs/product/mvp-scope.md` for MVP boundaries and
 - RabbitMQ carries asynchronous log/event flows with at-least-once delivery.
 - ClickHouse stores searchable logs and supplies analytics data.
 - PostgreSQL stores relational, configuration, and Incident state.
-- Redis holds operational cache/dedup state, not authoritative persistent data.
+- Redis holds operational cache/dedup state and authoritative access-token revocation by JWT `jti` until expiry. PostgreSQL owns refresh-session metadata and persistent relational data.
 - Follow `docs/architecture/architecture.md` for architectural invariants.
 
 ## Logical Modules and Capabilities

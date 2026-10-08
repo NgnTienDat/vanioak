@@ -18,7 +18,7 @@ Required for logic that does not need infrastructure:
 
 Use real disposable dependencies where practical (for example Testcontainers) for:
 
-- PostgreSQL repositories/migrations, concurrent/idempotent initial Admin bootstrap, and hashed-password persistence;
+- PostgreSQL repositories/migrations and configured-username Admin bootstrap: creation with BCrypt password persistence, repeated startup and existing ADMIN preservation (including DISABLED), ENGINEER username rejection, disabled bootstrap, and safe invalid-configuration failures;
 - ClickHouse insert/search, hourly health analytics, and 7-day TTL without deleting PostgreSQL state;
 - Redis cache/dedup atomic behavior, including API-key invalidation/expiry and bounded local caching;
 - RabbitMQ publish/consume/ACK/retry/DLQ, including unroutable publishes and stable event IDs under redelivery without duplicate Incident/notification storms;

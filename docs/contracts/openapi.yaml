@@ -3,18 +3,43 @@ info:
   title: Log Monitoring Platform API
   version: 1.0.0
   description: >-
-    REST API contract for the MVP. All responses use the common response envelope.
-    DISABLED-state behavior follows docs/quality/security.md: disabled login or
-    ingestion scope returns 401; disabled-user protected access or management
-    requiring an active scope returns 403. Historical reads remain authorized.
-    Input length violations return 400 using ErrorResponse before persistence.
+    REST API contract for the MVP, synchronized with docs/contracts/rest-api.md in Pass 2. Every
+    JSON response uses the shared ApiResponse<T> envelope; named *Response schemas describe data
+    payloads only. Inline specializations must not generate separate Java envelope classes.
+    Services/modules do not return HTTP envelopes or response DTOs. Protected human APIs re-evaluate
+    user status (disabled user: 403); disabled login/refresh or ingestion scope returns 401. Logout
+    revokes the current refresh session and a supplied valid unexpired access token for the same user.
+    Other sessions and historical reads remain authorized. Input length violations return 400 with field-to-message validation data before
+    persistence. SSE retains its separate contract; other authoritative docs await Pass 3
+    synchronization.
 servers:
 - url: /api/v1
 security:
 - bearerAuth: []
+tags:
+- name: Auth
+  description: Login, refresh, and logout.
+- name: Users
+  description: ENGINEER user management.
+- name: Applications
+  description: Applications and engineer assignments.
+- name: API Keys
+  description: Environment-scoped API-key list, create, rotate, and revoke.
+- name: Log Ingestion
+  description: Single and batch log ingestion.
+- name: Log Search
+  description: Authorized centralized log search.
+- name: Analytics
+  description: Hourly application health analytics.
+- name: Incidents
+  description: Incident list and detail.
+- name: Alert Rules
+  description: Alert-rule management.
 paths:
   /auth/login:
     post:
+      tags:
+      - Auth
       security: []
       summary: Login
       requestBody:
@@ -29,45 +54,312 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/LoginResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /logs/batch:
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      description: >-
+        Authenticate an ACTIVE ADMIN or ENGINEER and issue access and refresh JWTs. Initial ADMIN is created by bootstrap, not REST.
+        Invalid credentials or a DISABLED user return 401. Credentials/tokens must never be logged.
+  /auth/refresh:
     post:
-      security:
-      - apiKeyAuth: []
-      summary: Ingest a batch of logs
-      parameters:
-      - $ref: '#/components/parameters/ApiKey'
+      tags:
+      - Auth
+      summary: Refresh authentication tokens
+      description: >-
+        Authenticate the refresh_token in the JSON body; no Bearer access token is required.
+        Successful refresh consumes the current single-use token and returns a rotated pair for the
+        same session. The old token cannot be reused, including concurrently. Invalid, expired,
+        revoked, consumed tokens or a DISABLED user return 401. Reuse of a consumed refresh JWT
+        revokes its refresh session, including the current rotated token; other sessions/devices
+        are unaffected. Refresh rotation or replay handling alone does not revoke access tokens.
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LogBatchInput'
+              $ref: '#/components/schemas/RefreshTokenRequest'
       responses:
-        '202':
-          description: Accepted by RabbitMQ
+        '200':
+          description: Refresh authentication tokens successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BatchIngestResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/RefreshTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /auth/logout:
+    post:
+      tags:
+      - Auth
+      summary: Logout current session
+      description: >-
+        Authenticate the current refresh JWT in the JSON body. An optional Authorization: Bearer
+        header may carry the current access token; no access token is required. Revoke this refresh
+        session, preventing future refresh; other sessions/devices remain active. If the supplied
+        access token verifies, is unexpired and belongs to the same user, it cannot be reused after
+        successful logout. A valid access token for a different user returns 401 without revocation.
+        Missing, invalid or expired optional access tokens do not block logout with a valid refresh
+        token. Other access tokens remain subject to expiry and normal authorization checks.
+        The client discards local tokens after success. No forced SSE disconnection or revocation
+        broadcast is introduced. Invalid, expired, revoked or consumed refresh tokens return 401.
+        A required revocation dependency failure returns a safe 500, never a successful logout.
+      security:
+      - bearerAuth: []
+      - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '200':
+          description: Logout current session successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      type: 'null'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /users:
+    get:
+      tags:
+      - Users
+      summary: List ENGINEER users
+      description: >-
+        ACTIVE ADMIN only. Manages ENGINEER users only; ADMIN records cannot be managed through
+        these operations. Non-Admin callers return 403. Includes disabled users unless filtered.
+        Empty results return items=[] and next_cursor=null.
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: List ENGINEER users successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/UserListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+      - Users
+      summary: Create ENGINEER user
+      description: >-
+        ACTIVE ADMIN only. Manages ENGINEER users only; ADMIN records cannot be managed through
+        these operations. Non-Admin callers return 403. Creates an ACTIVE ENGINEER; role/status are
+        fixed by the server, not create-request fields. Initial ADMIN uses bootstrap.
+        Passwords/hashes are never returned. Duplicate username returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Create ENGINEER user successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /users/{userId}:
+    get:
+      tags:
+      - Users
+      summary: Get ENGINEER user
+      description: >-
+        ACTIVE ADMIN only. Manages ENGINEER users only; ADMIN records cannot be managed through
+        these operations. Non-Admin callers or requests targeting ADMIN return 403; unknown user IDs
+        return 404. Disabled ENGINEER records remain readable. Invalid UUID returns 400.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Get ENGINEER user successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags:
+      - Users
+      summary: Update ENGINEER user
+      description: >-
+        ACTIVE ADMIN only. Manages ENGINEER users only; ADMIN records cannot be managed through
+        these operations. Non-Admin callers or requests targeting ADMIN return 403; unknown user IDs
+        return 404. Supports username/password/status, at least one required. Role changes are
+        rejected with 400; duplicate username returns 409. Status ACTIVE explicitly reactivates a
+        disabled ENGINEER. Passwords/hashes are never returned. Invalid UUID returns 400.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Update ENGINEER user successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Users
+      summary: Disable ENGINEER user
+      description: >-
+        ACTIVE ADMIN only. Manages ENGINEER users only; ADMIN records cannot be managed through
+        these operations. Non-Admin callers or requests targeting ADMIN return 403; unknown user IDs
+        return 404. Soft delete sets status=DISABLED, retaining the user and access assignments.
+        Repeating for an already-disabled ENGINEER returns its disabled state. Disabled users cannot
+        log in or refresh; protected REST denies them with 403 and SSE follows disabled-user checks.
+        This differs from logout. Invalid UUID returns 400.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Disable ENGINEER user successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /applications:
     get:
+      tags:
+      - Applications
       summary: List visible applications
-      description: ADMIN sees all applications; ENGINEER sees assigned applications only.
+      description: >-
+        ADMIN sees all applications; ENGINEER sees assigned applications only. Response includes
+        stored environment metadata; disabled scopes remain visible for authorized historical
+        access.
       parameters:
       - name: status
         in: query
@@ -84,14 +376,28 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApplicationListResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApplicationListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
+      tags:
+      - Applications
       summary: Create application
-      description: ADMIN only.
+      description: >-
+        ADMIN only. Create the application and exactly three ACTIVE environments (DEV, TEST,
+        STAGING) in the same transaction; if any creation fails, no records are committed. Response
+        includes all three environments and their IDs.
       requestBody:
         required: true
         content:
@@ -104,17 +410,33 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApplicationResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApplicationResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /applications/{applicationId}:
     patch:
+      tags:
+      - Applications
       summary: Update application
-      description: ADMIN only.
+      description: >-
+        ADMIN only. Update name/description/status. DISABLED blocks ingestion in every environment.
+        Reactivating the application does not change environment statuses; existing DISABLED
+        environments remain disabled. No separate REST environment create/update/enable/disable
+        operations exist. Environment remains an entity with environment_id; existing SQL/status
+        data is unchanged, with no automatic re-enable, synchronization or migration.
       parameters:
       - $ref: '#/components/parameters/ApplicationId'
       requestBody:
@@ -129,7 +451,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApplicationResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApplicationResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -138,63 +467,77 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /applications/{applicationId}/environments:
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /applications/{applicationId}/engineers/{userId}:
     post:
-      summary: Create environment
-      description: ADMIN only.
+      tags:
+      - Applications
+      summary: Assign engineer to application
+      description: >-
+        ADMIN only. Targets must be ENGINEER users; assignments are application-scoped and include
+        all application environments. These operations do not change roles.
       parameters:
       - $ref: '#/components/parameters/ApplicationId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateEnvironmentRequest'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnvironmentResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /applications/{applicationId}/environments/{environmentId}:
-    patch:
-      summary: Update environment
-      description: ADMIN only.
-      parameters:
-      - $ref: '#/components/parameters/ApplicationId'
-      - $ref: '#/components/parameters/EnvironmentId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateEnvironmentRequest'
+      - $ref: '#/components/parameters/UserId'
       responses:
         '200':
-          description: Updated
+          description: Assigned
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EnvironmentResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ActionResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+      - Applications
+      summary: Remove engineer access
+      description: >-
+        ADMIN only. Targets must be ENGINEER users; assignments are application-scoped and include
+        all application environments. These operations do not change roles.
+      parameters:
+      - $ref: '#/components/parameters/ApplicationId'
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Removed
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ActionResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /applications/{applicationId}/environments/{environmentId}/api-keys:
     get:
+      tags:
+      - API Keys
       summary: List ingestion API-key metadata
       description: ADMIN only.
       parameters:
@@ -208,16 +551,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiKeyListResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApiKeyListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
+      tags:
+      - API Keys
       summary: Create ingestion API key
-      description: ADMIN only.
+      description: ADMIN only. Requires an active application/environment scope; disabled scope returns 403.
       parameters:
       - $ref: '#/components/parameters/ApplicationId'
       - $ref: '#/components/parameters/EnvironmentId'
@@ -233,7 +587,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiKeySecretResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApiKeySecretResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -242,10 +603,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api-keys/{credentialId}/rotate:
     post:
+      tags:
+      - API Keys
       summary: Rotate ingestion API key
-      description: ADMIN only.
+      description: ADMIN only. Requires an active application/environment scope; disabled scope returns 403.
       parameters:
       - $ref: '#/components/parameters/CredentialId'
       responses:
@@ -254,15 +619,26 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiKeySecretResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApiKeySecretResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api-keys/{credentialId}:
     delete:
+      tags:
+      - API Keys
       summary: Revoke ingestion API key
       description: ADMIN only.
       parameters:
@@ -273,54 +649,26 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiKeyResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/ApiKeyResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /applications/{applicationId}/engineers/{userId}:
-    post:
-      summary: Assign engineer to application
-      description: ADMIN only.
-      parameters:
-      - $ref: '#/components/parameters/ApplicationId'
-      - $ref: '#/components/parameters/UserId'
-      responses:
-        '200':
-          description: Assigned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActionResponse'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    delete:
-      summary: Remove engineer access
-      description: ADMIN only.
-      parameters:
-      - $ref: '#/components/parameters/ApplicationId'
-      - $ref: '#/components/parameters/UserId'
-      responses:
-        '200':
-          description: Removed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ActionResponse'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /logs:
     post:
+      tags:
+      - Log Ingestion
       security:
       - apiKeyAuth: []
       summary: Ingest one log
@@ -338,7 +686,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngestResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/IngestResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -349,9 +704,17 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     get:
+      tags:
+      - Log Search
       summary: Search logs
-      description: ADMIN can search all applications; ENGINEER can search assigned applications only. Results use timestamp DESC, event_id DESC; cursors preserve this order and the original filters. If from is supplied, to is required.
+      description: >-
+        ADMIN can search all applications; ENGINEER can search assigned applications only. Results
+        use timestamp DESC, event_id DESC; cursors preserve this order and the original filters. If
+        from is supplied, to is required. Empty results return data.items=[] and
+        data.next_cursor=null.
       parameters:
       - name: application_id
         in: query
@@ -393,15 +756,127 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LogListResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/LogListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /logs/batch:
+    post:
+      tags:
+      - Log Ingestion
+      security:
+      - apiKeyAuth: []
+      summary: Ingest a batch of logs
+      parameters:
+      - $ref: '#/components/parameters/ApiKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogBatchInput'
+      responses:
+        '202':
+          description: Accepted by RabbitMQ
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/BatchIngestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /analytics/health:
+    get:
+      tags:
+      - Analytics
+      summary: Get hourly application health analytics
+      description: >-
+        ADMIN can query all applications; ENGINEER can query assigned applications only. Empty
+        datasets return data.bucket=hour and data.items=[].
+      parameters:
+      - name: application_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: environment_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: bucket
+        in: query
+        schema:
+          type: string
+          enum:
+          - hour
+          default: hour
+      responses:
+        '200':
+          description: Health analytics
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/HealthAnalyticsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /incidents:
     get:
+      tags:
+      - Incidents
       summary: List incidents
       description: ADMIN sees all incidents; ENGINEER sees incidents for assigned applications only.
       parameters:
@@ -444,13 +919,24 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IncidentListResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/IncidentListResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /incidents/{incidentId}:
     get:
+      tags:
+      - Incidents
       summary: Get incident detail
       description: ADMIN can view all incidents; ENGINEER can view incidents for assigned applications only.
       parameters:
@@ -461,15 +947,26 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IncidentResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/IncidentResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /alert-rules:
     get:
+      tags:
+      - Alert Rules
       summary: List alert rules
       description: ADMIN only.
       responses:
@@ -478,17 +975,28 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AlertRuleListResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/AlertRuleListResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       parameters:
       - $ref: '#/components/parameters/Cursor'
       - $ref: '#/components/parameters/Limit'
     post:
+      tags:
+      - Alert Rules
       summary: Create alert rule
-      description: ADMIN only.
+      description: ADMIN only. Requires an active application/environment scope; disabled scope returns 403.
       requestBody:
         required: true
         content:
@@ -501,7 +1009,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AlertRuleResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/AlertRuleResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -510,10 +1025,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /alert-rules/{ruleId}:
     patch:
+      tags:
+      - Alert Rules
       summary: Update alert rule
-      description: ADMIN only.
+      description: >-
+        ADMIN only. Enabling a rule requires an active application/environment scope; disabled scope
+        returns 403. Rule disabling remains allowed.
       parameters:
       - $ref: '#/components/parameters/RuleId'
       requestBody:
@@ -528,7 +1049,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AlertRuleResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/AlertRuleResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -537,7 +1065,11 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     delete:
+      tags:
+      - Alert Rules
       summary: Disable alert rule
       description: ADMIN only.
       parameters:
@@ -548,60 +1080,22 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AlertRuleResponse'
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/AlertRuleResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /analytics/health:
-    get:
-      summary: Get hourly application health analytics
-      description: ADMIN can query all applications; ENGINEER can query assigned applications only.
-      parameters:
-      - name: application_id
-        in: query
-        schema:
-          type: string
-          format: uuid
-      - name: environment_id
-        in: query
-        schema:
-          type: string
-          format: uuid
-      - name: from
-        in: query
-        required: true
-        schema:
-          type: string
-          format: date-time
-      - name: to
-        in: query
-        required: true
-        schema:
-          type: string
-          format: date-time
-      - name: bucket
-        in: query
-        schema:
-          type: string
-          enum:
-          - hour
-          default: hour
-      responses:
-        '200':
-          description: Health analytics
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HealthAnalyticsResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 components:
   securitySchemes:
     bearerAuth:
@@ -680,46 +1174,116 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: [object, 'null']
+                  additionalProperties:
+                    type: string
     Unauthorized:
       description: Unauthorized
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
     Forbidden:
       description: Forbidden
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
     NotFound:
       description: Resource not found
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
     Conflict:
       description: Conflict
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
     TooManyRequests:
       description: Backpressure or rate limit
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
     ServiceUnavailable:
       description: Dependency unavailable
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
+    InternalServerError:
+      description: Unexpected server error; no stack traces or secrets are exposed.
+      content:
+        application/json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/ApiResponse'
+            - type: object
+              properties:
+                success:
+                  const: false
+                data:
+                  type: 'null'
   schemas:
-    ResponseEnvelope:
+    ApiResponse:
       type: object
+      description: >-
+        The single shared HTTP/API envelope ApiResponse<T>. Controllers specialize data with a
+        payload DTO; services/modules do not return this type. Inline allOf specializations describe
+        wire types and must not generate separate Java envelope classes. HTTP payload mapping may
+        use MapStruct when appropriate. SSE events follow their separate contract.
+      additionalProperties: false
       required:
       - success
       - message
@@ -729,36 +1293,8 @@ components:
           type: boolean
         message:
           type: string
+          description: Safe for client display/logging.
         data: {}
-    ErrorData:
-      type: object
-      required:
-      - code
-      - request_id
-      - details
-      properties:
-        code:
-          type: string
-        request_id:
-          type: string
-          format: uuid
-        details:
-          type: object
-          additionalProperties: true
-    ErrorResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: false
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ErrorData'
     LoginRequest:
       type: object
       required:
@@ -788,39 +1324,31 @@ components:
           enum:
           - ADMIN
           - ENGINEER
-    LoginData:
+    LoginResponse:
       type: object
       required:
       - access_token
+      - refresh_token
       - token_type
       - expires_in
       - user
       properties:
         access_token:
           type: string
+          description: Short-lived access JWT; a valid unexpired token supplied at logout for the same user is revoked.
         token_type:
           type: string
           enum:
           - Bearer
         expires_in:
           type: integer
+          description: Access-token TTL in seconds; exact TTL is configured during implementation.
         user:
           $ref: '#/components/schemas/UserSummary'
-    LoginResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
+        refresh_token:
           type: string
-        data:
-          $ref: '#/components/schemas/LoginData'
-    ActionData:
+          description: Current single-use refresh JWT; rotated after each successful refresh. Reuse revokes this refresh session.
+    ActionResponse:
       type: object
       required:
       - user_id
@@ -832,26 +1360,14 @@ components:
         application_id:
           type: string
           format: uuid
-    ActionResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ActionData'
-    ApplicationSummary:
+    ApplicationResponse:
       type: object
       required:
       - id
       - name
       - status
+      - description
+      - environments
       properties:
         id:
           type: string
@@ -871,21 +1387,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EnvironmentSummary'
-    ApplicationResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ApplicationSummary'
-    ApplicationListData:
+          description: >-
+            Includes environment IDs and stored statuses. New applications have exactly DEV, TEST,
+            STAGING, all initially ACTIVE; existing disabled environments are not re-enabled or
+            migrated.
+    ApplicationListResponse:
       type: object
       required:
       - items
@@ -894,25 +1400,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ApplicationSummary'
+            $ref: '#/components/schemas/ApplicationResponse'
         next_cursor:
           type:
           - string
           - 'null'
-    ApplicationListResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ApplicationListData'
     CreateApplicationRequest:
       type: object
       required:
@@ -936,17 +1428,6 @@ components:
         name:
           type: string
           maxLength: 100
-    CreateEnvironmentRequest:
-      type: object
-      required:
-      - name
-      properties:
-        name:
-          type: string
-          enum:
-          - DEV
-          - TEST
-          - STAGING
     EnvironmentSummary:
       type: object
       required:
@@ -968,20 +1449,6 @@ components:
           enum:
           - ACTIVE
           - DISABLED
-    EnvironmentResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/EnvironmentSummary'
     LogLevel:
       type: string
       enum:
@@ -1043,7 +1510,7 @@ components:
           maxItems: 1000
           items:
             $ref: '#/components/schemas/LogInput'
-    IngestData:
+    IngestResponse:
       type: object
       required:
       - accepted
@@ -1055,21 +1522,7 @@ components:
         request_id:
           type: string
           format: uuid
-    IngestResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/IngestData'
-    BatchIngestData:
+    BatchIngestResponse:
       type: object
       required:
       - accepted
@@ -1084,20 +1537,6 @@ components:
         request_id:
           type: string
           format: uuid
-    BatchIngestResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/BatchIngestData'
     LogRecord:
       type: object
       required:
@@ -1141,7 +1580,7 @@ components:
         processed_at:
           type: string
           format: date-time
-    LogListData:
+    LogListResponse:
       type: object
       required:
       - items
@@ -1155,21 +1594,7 @@ components:
           type:
           - string
           - 'null'
-    LogListResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/LogListData'
-    Incident:
+    IncidentResponse:
       type: object
       required:
       - id
@@ -1244,7 +1669,7 @@ components:
           - object
           - 'null'
           additionalProperties: true
-    IncidentListData:
+    IncidentListResponse:
       type: object
       required:
       - items
@@ -1253,39 +1678,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Incident'
+            $ref: '#/components/schemas/IncidentResponse'
         next_cursor:
           type:
           - string
           - 'null'
-    IncidentListResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/IncidentListData'
-    IncidentResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/Incident'
     CreateAlertRuleRequest:
       type: object
       required:
@@ -1333,7 +1730,7 @@ components:
         cooldown_seconds:
           type: integer
           minimum: 1
-    AlertRule:
+    AlertRuleResponse:
       type: object
       required:
       - id
@@ -1369,21 +1766,7 @@ components:
           format: date-time
         cooldown_seconds:
           type: integer
-    AlertRuleResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/AlertRule'
-    AlertRuleListData:
+    AlertRuleListResponse:
       type: object
       required:
       - items
@@ -1392,25 +1775,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/AlertRule'
+            $ref: '#/components/schemas/AlertRuleResponse'
         next_cursor:
           type:
           - string
           - 'null'
-    AlertRuleListResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/AlertRuleListData'
     HealthMetric:
       type: object
       required:
@@ -1443,7 +1812,7 @@ components:
         log_error_rate:
           type: number
           format: double
-    HealthAnalyticsData:
+    HealthAnalyticsResponse:
       type: object
       required:
       - bucket
@@ -1457,31 +1826,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/HealthMetric'
-    HealthAnalyticsResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/HealthAnalyticsData'
-    UpdateEnvironmentRequest:
-      type: object
-      required:
-      - status
-      properties:
-        status:
-          type: string
-          enum:
-          - ACTIVE
-          - DISABLED
-    ApiKeyMetadata:
+    ApiKeyResponse:
       type: object
       required:
       - id
@@ -1525,46 +1870,18 @@ components:
           - string
           - 'null'
           format: date-time
-    ApiKeySecretData:
+    ApiKeySecretResponse:
       type: object
       required:
       - credential
       - api_key
       properties:
         credential:
-          $ref: '#/components/schemas/ApiKeyMetadata'
+          $ref: '#/components/schemas/ApiKeyResponse'
         api_key:
           type: string
           description: Returned only on create/rotate.
-    ApiKeySecretResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ApiKeySecretData'
-    ApiKeyResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ApiKeyMetadata'
-    ApiKeyListData:
+    ApiKeyListResponse:
       type: object
       required:
       - items
@@ -1573,25 +1890,11 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ApiKeyMetadata'
+            $ref: '#/components/schemas/ApiKeyResponse'
         next_cursor:
           type:
           - string
           - 'null'
-    ApiKeyListResponse:
-      type: object
-      required:
-      - success
-      - message
-      - data
-      properties:
-        success:
-          type: boolean
-          const: true
-        message:
-          type: string
-        data:
-          $ref: '#/components/schemas/ApiKeyListData'
     ApplicationRef:
       type: object
       required:
@@ -1618,3 +1921,114 @@ components:
           - DEV
           - TEST
           - STAGING
+    RefreshTokenRequest:
+      type: object
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Current refresh JWT for this session, supplied in the JSON body.
+    LogoutRequest:
+      type: object
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Current refresh JWT for this session, supplied in the JSON body.
+    RefreshTokenResponse:
+      type: object
+      required:
+      - access_token
+      - refresh_token
+      - token_type
+      - expires_in
+      properties:
+        access_token:
+          type: string
+          description: Short-lived access JWT; a valid unexpired token supplied at logout for the same user is revoked.
+        refresh_token:
+          type: string
+          description: Current single-use refresh JWT; rotated after each successful refresh. Reuse revokes this refresh session.
+        token_type:
+          type: string
+          enum:
+          - Bearer
+        expires_in:
+          type: integer
+          description: Access-token TTL in seconds; exact TTL is configured during implementation.
+    UserResponse:
+      type: object
+      required:
+      - id
+      - username
+      - role
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          maxLength: 100
+        role:
+          type: string
+          const: ENGINEER
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    UserListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - username
+      - password
+      properties:
+        username:
+          type: string
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          writeOnly: true
+      description: >-
+        Creates an ACTIVE ENGINEER only. role and status are not accepted; role submission returns
+        400. Password is stored only as a strong one-way hash.
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        username:
+          type: string
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          writeOnly: true
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+      description: >-
+        At least one supported field is required. role cannot be changed and is not accepted. A
+        supplied password replaces the hash; setting ACTIVE explicitly reactivates a disabled
+        ENGINEER.
