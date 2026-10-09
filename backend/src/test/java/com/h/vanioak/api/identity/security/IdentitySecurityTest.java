@@ -51,6 +51,10 @@ import com.h.vanioak.api.identity.UserController;
 import com.h.vanioak.api.identity.ApplicationController;
 import com.h.vanioak.modules.identity.api.ApplicationFacade;
 import com.h.vanioak.api.identity.ApiKeyController;
+import com.h.vanioak.api.ingestion.IngestionController;
+import com.h.vanioak.api.ingestion.security.IngestionSecurityConfig;
+import com.h.vanioak.modules.ingestion.internal.IngestionService;
+import com.h.vanioak.modules.ingestion.internal.RawLogPublisher;
 import com.h.vanioak.modules.identity.api.ApiKeyFacade;
 import com.h.vanioak.common.security.SecurityConfig;
 import com.h.vanioak.modules.identity.api.AuthFacade.LoginResult;
@@ -68,8 +72,9 @@ import com.h.vanioak.modules.identity.internal.user.UserRepository;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 
-@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class})
-@Import({IdentitySecurityConfig.class, SecurityConfig.class, AuthService.class, JwtService.class})
+@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class, IngestionController.class})
+@Import({IdentitySecurityConfig.class, IngestionSecurityConfig.class, IngestionService.class,
+		SecurityConfig.class, AuthService.class, JwtService.class})
 class IdentitySecurityTest {
 
 	@Autowired
@@ -94,6 +99,8 @@ class IdentitySecurityTest {
 	private ApplicationFacade applications;
 	@MockitoBean
 	private ApiKeyFacade keys;
+	@MockitoBean
+	private RawLogPublisher publisher;
 	private final UUID userId = UUID.randomUUID();
 	private UserEntity user;
 	private String token;
@@ -107,6 +114,18 @@ class IdentitySecurityTest {
 		when(users.findById(userId)).thenReturn(Optional.of(user));
 		when(management.list(null, null, 50)).thenReturn(new UserPage(List.of(), null));
 		token = jwt.generateAccessToken(userId);
+	}
+
+	@Test
+	void humanJwtCannotSubstituteForIngestionApiKey() throws Exception {
+		when(keys.verify("test-only-key")).thenReturn(new ApiKeyFacade.VerificationResult(false, null, null, null, null, null));
+		for (String path : List.of("/api/v1/logs", "/api/v1/logs/batch")) {
+			failure(mvc.perform(post(path).header("X-API-Key", "test-only-key")
+					.contentType(MediaType.APPLICATION_JSON).content("{}")), 401, "Invalid API key");
+			failure(mvc.perform(post(path).header("X-API-Key", "test-only-key")
+					.header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON).content("{}")), 401, "Invalid API key");
+		}
 	}
 
 	@Test

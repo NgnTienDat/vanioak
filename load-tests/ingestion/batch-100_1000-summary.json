@@ -1,0 +1,279 @@
+{
+  "configuration": {
+    "base_url": "http://127.0.0.1:8080",
+    "application": "order-service",
+    "environment": "DEV",
+    "mode": "batch",
+    "logs_per_request": 100,
+    "target_logs_per_second": 1000,
+    "configured_requests_per_second": 10,
+    "arrival_rate": 1000,
+    "arrival_time_unit": "100s",
+    "scheduled_duration": "30s",
+    "pre_allocated_vus": 20,
+    "max_vus": 100,
+    "request_timeout": "10s",
+    "graceful_stop": "30s"
+  },
+  "measurements": {
+    "elapsed_seconds_including_drain": 30.0154391,
+    "total_requests": 301,
+    "successful_202_requests": 301,
+    "failed_requests": 0,
+    "unclassified_requests": 0,
+    "accepted_logs": 30100,
+    "actual_accepted_logs_per_second": 1002.8172468081602,
+    "actual_successful_requests_per_second": 10.028172468081602,
+    "error_rate": 0,
+    "dropped_iterations": 0,
+    "http_completion_ms": {
+      "p(50)": 7,
+      "p(95)": 18,
+      "p(99)": 279
+    },
+    "http_req_duration_ms": {
+      "p(50)": 6.5813,
+      "p(95)": 17.4208,
+      "p(99)": 277.5246
+    }
+  },
+  "assessment": {
+    "nfr01_1000_logs_per_second": "PASS",
+    "nfr02_p95_below_100_ms": "PASS",
+    "sustained_capacity": "NOT ESTABLISHED by aggregate results alone; review duration, time series and resource usage"
+  },
+  "k6": {
+    "metrics": {
+      "data_received": {
+        "contains": "data",
+        "values": {
+          "rate": 4302.085988807007,
+          "count": 129129
+        },
+        "type": "counter"
+      },
+      "accepted_logs": {
+        "type": "counter",
+        "contains": "default",
+        "values": {
+          "count": 30100,
+          "rate": 1002.8172468081602
+        },
+        "thresholds": {
+          "rate>=1000": {
+            "ok": true
+          }
+        }
+      },
+      "http_req_duration{expected_response:true}": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 6.5813,
+          "p(95)": 17.4208,
+          "p(99)": 277.5246
+        }
+      },
+      "checks": {
+        "type": "rate",
+        "contains": "default",
+        "values": {
+          "fails": 0,
+          "rate": 1,
+          "passes": 301
+        }
+      },
+      "ingestion_error_rate": {
+        "contains": "default",
+        "values": {
+          "rate": 0,
+          "passes": 0,
+          "fails": 301
+        },
+        "type": "rate"
+      },
+      "http_completion_ms": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 7,
+          "p(95)": 18,
+          "p(99)": 279
+        },
+        "thresholds": {
+          "p(95)<100": {
+            "ok": true
+          }
+        }
+      },
+      "http_req_blocked": {
+        "values": {
+          "p(50)": 0,
+          "p(95)": 0.5508,
+          "p(99)": 1.0781
+        },
+        "type": "trend",
+        "contains": "time"
+      },
+      "successful_requests": {
+        "type": "counter",
+        "contains": "default",
+        "values": {
+          "count": 301,
+          "rate": 10.028172468081602
+        }
+      },
+      "http_req_connecting": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(99)": 1.0014,
+          "p(50)": 0,
+          "p(95)": 0.5508
+        }
+      },
+      "iterations": {
+        "type": "counter",
+        "contains": "default",
+        "values": {
+          "count": 301,
+          "rate": 10.028172468081602
+        }
+      },
+      "http_req_sending": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 0,
+          "p(95)": 0.9519,
+          "p(99)": 1.3346
+        }
+      },
+      "http_req_tls_handshaking": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 0,
+          "p(95)": 0,
+          "p(99)": 0
+        }
+      },
+      "iteration_duration": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 8.1078,
+          "p(95)": 24.353,
+          "p(99)": 279.9439
+        }
+      },
+      "data_sent": {
+        "type": "counter",
+        "contains": "data",
+        "values": {
+          "rate": 309128.44450108346,
+          "count": 9278626
+        }
+      },
+      "vus_max": {
+        "type": "gauge",
+        "contains": "default",
+        "values": {
+          "value": 20,
+          "min": 20,
+          "max": 20
+        }
+      },
+      "http_req_receiving": {
+        "type": "trend",
+        "contains": "time",
+        "values": {
+          "p(50)": 0.5298,
+          "p(95)": 1.1063,
+          "p(99)": 1.4431
+        }
+      },
+      "vus": {
+        "type": "gauge",
+        "contains": "default",
+        "values": {
+          "max": 1,
+          "value": 0,
+          "min": 0
+        }
+      },
+      "http_reqs": {
+        "values": {
+          "rate": 10.028172468081602,
+          "count": 301
+        },
+        "type": "counter",
+        "contains": "default"
+      },
+      "http_req_duration": {
+        "values": {
+          "p(50)": 6.5813,
+          "p(95)": 17.4208,
+          "p(99)": 277.5246
+        },
+        "type": "trend",
+        "contains": "time"
+      },
+      "http_req_failed": {
+        "contains": "default",
+        "values": {
+          "rate": 0,
+          "passes": 0,
+          "fails": 301
+        },
+        "type": "rate"
+      },
+      "failed_requests": {
+        "type": "counter",
+        "contains": "default",
+        "values": {
+          "count": 0,
+          "rate": 0
+        }
+      },
+      "http_req_waiting": {
+        "values": {
+          "p(50)": 5.9754,
+          "p(95)": 15.2768,
+          "p(99)": 277.429
+        },
+        "type": "trend",
+        "contains": "time"
+      }
+    },
+    "root_group": {
+      "name": "",
+      "path": "",
+      "id": "d41d8cd98f00b204e9800998ecf8427e",
+      "groups": [],
+      "checks": [
+          {
+            "id": "75b2f7039e161323681dd26930384bb2",
+            "passes": 301,
+            "fails": 0,
+            "name": "202 with valid acceptance envelope",
+            "path": "::202 with valid acceptance envelope"
+          }
+        ]
+    },
+    "options": {
+      "noColor": false,
+      "summaryTrendStats": [
+        "p(50)",
+        "p(95)",
+        "p(99)"
+      ],
+      "summaryTimeUnit": ""
+    },
+    "state": {
+      "testRunDurationMs": 30015.4391,
+      "isStdOutTTY": true,
+      "isStdErrTTY": true
+    }
+  }
+}

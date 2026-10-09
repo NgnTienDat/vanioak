@@ -5,7 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.reset;
 
 import java.nio.charset.StandardCharsets;
@@ -18,11 +22,15 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import javax.sql.DataSource;
+
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration;
@@ -30,7 +38,9 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,20 +48,24 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.zaxxer.hikari.HikariDataSource;
 import com.h.vanioak.common.security.SecurityConfig;
 import com.h.vanioak.modules.identity.api.ApiKeyFacade;
 import com.h.vanioak.modules.identity.api.ApplicationFacade;
 import com.h.vanioak.modules.identity.internal.apikey.ApiKeyService;
 import com.h.vanioak.modules.identity.internal.apikey.IngestionCredentialRepository;
 import com.h.vanioak.modules.identity.internal.application.ApplicationService;
+import com.h.vanioak.modules.identity.internal.application.ApplicationRepository;
+import com.h.vanioak.modules.identity.internal.application.EnvironmentRepository;
 
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 @DataJpaTest(showSql = false, properties = {
-		"spring.flyway.enabled=true", "spring.jpa.hibernate.ddl-auto=validate"
+		"spring.flyway.enabled=true", "spring.jpa.hibernate.ddl-auto=validate", "vanioak.identity.api-key-cache-ttl=30s"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({ApiKeyService.class, ApplicationService.class, SecurityConfig.class,
@@ -77,11 +91,23 @@ class ApiKeyVerificationIT {
 	private EntityManager entityManager;
 	@Autowired
 	private PlatformTransactionManager transactionManager;
+	@Autowired
+	private DataSource dataSource;
+	@Autowired
+	private EntityManagerFactory entityManagerFactory;
+	@Autowired
+	private Environment configuration;
+	@MockitoSpyBean
+	private EnvironmentRepository environmentRepository;
+	@MockitoSpyBean
+	private ApplicationRepository applicationRepository;
 	@MockitoSpyBean
 	private StringRedisTemplate redis;
 	private final List<String> ownedKeys = new ArrayList<>();
 	private UUID actor;
 	private UUID appId;
+	private String appName;
+	private ApplicationFacade.EnvironmentName environmentName;
 	private List<UUID> environmentIds = List.of();
 
 	@BeforeEach
@@ -90,7 +116,43 @@ class ApiKeyVerificationIT {
 				"verify-it-" + UUID.randomUUID(), encoder.encode("test-only-password"))).getId());
 		var app = applications.create(new ApplicationFacade.CreateApplication("verify-it-" + UUID.randomUUID(), null));
 		appId = app.id();
+		appName = app.name();
+		environmentName = app.environments().getFirst().name();
 		environmentIds = app.environments().stream().map(ApplicationFacade.EnvironmentView::id).toList();
+	}
+
+	@Test
+	void databaseConnectionsAreReturnedBeforeNextLookupAndRedisPopulation() throws Exception {
+		assertEquals(Boolean.FALSE, configuration.getProperty("spring.jpa.open-in-view", Boolean.class));
+		var issued = issue(null);
+		String cacheKey = own(issued);
+		var pool = dataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean();
+		clearInvocations(environmentRepository, applicationRepository, redis);
+		var environmentLookup = mockingDetails(environmentRepository).getMockCreationSettings().getDefaultAnswer();
+		var applicationLookup = mockingDetails(applicationRepository).getMockCreationSettings().getDefaultAnswer();
+		doAnswer(call -> {
+			assertEquals(0, pool.getActiveConnections(), "Credential lookup must return its JDBC connection");
+			assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+			return environmentLookup.answer(call);
+		}).when(environmentRepository).findById(environmentIds.getFirst());
+		doAnswer(call -> {
+			assertEquals(0, pool.getActiveConnections(), "Environment lookup must return its JDBC connection");
+			return applicationLookup.answer(call);
+		}).when(applicationRepository).findById(appId);
+		doAnswer(call -> {
+			assertEquals(0, pool.getActiveConnections(), "Redis population must not retain a JDBC connection");
+			assertFalse(TransactionSynchronizationManager.hasResource(entityManagerFactory));
+			return call.callRealMethod();
+		}).when(redis).execute(ArgumentMatchers.<RedisCallback<Boolean>>any());
+
+		assertFalse(TransactionSynchronizationManager.hasResource(entityManagerFactory));
+		assertTrue(keys.verify(issued.apiKey()).valid());
+		var order = inOrder(environmentRepository, applicationRepository, redis);
+		order.verify(environmentRepository).findById(environmentIds.getFirst());
+		order.verify(applicationRepository).findById(appId);
+		order.verify(redis).execute(ArgumentMatchers.<RedisCallback<Boolean>>any());
+		assertEquals(0, pool.getActiveConnections());
+		assertTrue(Boolean.TRUE.equals(redis.hasKey(cacheKey)));
 	}
 
 	@Test
@@ -102,6 +164,9 @@ class ApiKeyVerificationIT {
 		assertTrue(result.valid());
 		assertEquals(appId, result.applicationId());
 		assertEquals(environmentIds.getFirst(), result.environmentId());
+		assertEquals(appName, result.applicationName());
+		assertEquals(environmentName, result.environmentName());
+		assertEquals(expiry, result.validUntil());
 		String value = redis.opsForValue().get(cacheKey);
 		assertNotNull(value);
 		assertFalse(value.contains(issued.apiKey()));

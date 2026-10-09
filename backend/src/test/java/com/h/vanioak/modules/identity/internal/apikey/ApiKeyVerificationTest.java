@@ -76,9 +76,11 @@ class ApiKeyVerificationTest {
 		when(credentials.findByKeyHash(hash)).thenReturn(Optional.of(credential));
 		when(environments.findById(envId)).thenReturn(Optional.of(environment));
 		when(environment.getApplicationId()).thenReturn(appId);
+		when(environment.getName()).thenReturn(ApplicationFacade.EnvironmentName.DEV);
 		when(environment.getStatus()).thenReturn(ApplicationFacade.Status.ACTIVE);
 		when(applications.findById(appId)).thenReturn(Optional.of(application));
 		when(application.getStatus()).thenReturn(ApplicationFacade.Status.ACTIVE);
+		when(application.getName()).thenReturn("example");
 		when(redis.opsForValue()).thenReturn(values);
 		when(values.get(any())).thenAnswer(call -> stored);
 		var connection = mock(RedisConnection.class);
@@ -103,11 +105,14 @@ class ApiKeyVerificationTest {
 		assertTrue(result.valid());
 		assertEquals(appId, result.applicationId());
 		assertEquals(envId, result.environmentId());
+		assertEquals("example", result.applicationName());
+		assertEquals(ApplicationFacade.EnvironmentName.DEV, result.environmentName());
 		assertFalse(stored.contains(raw));
 		assertFalse(stored.contains(hash));
 		assertTrue(expiration.isUnixTimestamp());
 		assertFalse(expiration.isPersistent());
 		long deadline = expiration.getExpirationTimeInMilliseconds();
+		assertEquals(deadline, result.validUntil().toEpochMilli());
 		assertTrue(deadline >= before + 30_000 && deadline <= Instant.now().toEpochMilli() + 30_000);
 		assertEquals(result, service.verify(raw));
 		verify(credentials, times(1)).findByKeyHash(hash);
@@ -164,6 +169,17 @@ class ApiKeyVerificationTest {
 		((ObjectNode) tree).put("deadline", Instant.EPOCH.toString());
 		stored = mapper.writeValueAsString(tree);
 		assertTrue(service.verify(raw).valid());
+		verify(credentials, times(2)).findByKeyHash(hash);
+	}
+
+	@Test
+	void legacyCachedContextWithoutNamesRequiresFreshPostgresVerification() {
+		assertTrue(service.verify(raw).valid());
+		var old = (ObjectNode) mapper.readTree(stored);
+		old.remove("applicationName");
+		old.remove("environmentName");
+		stored = mapper.writeValueAsString(old);
+		assertEquals("example", service.verify(raw).applicationName());
 		verify(credentials, times(2)).findByKeyHash(hash);
 	}
 
