@@ -11,8 +11,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface IngestionCredentialRepository extends JpaRepository<IngestionCredentialEntity, UUID> {
+	@Transactional(readOnly = true)
 	Optional<IngestionCredentialEntity> findByKeyHash(String keyHash);
 	@Query("""
 			select c from IngestionCredentialEntity c where c.environmentId = :environmentId

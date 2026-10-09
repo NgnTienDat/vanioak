@@ -10,7 +10,9 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -21,6 +23,11 @@ import com.h.vanioak.api.dto.ApiResponse;
 public class GlobalExceptionHandler {
 
 	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+	@ExceptionHandler({HttpMessageNotReadableException.class, MissingRequestHeaderException.class})
+	public ResponseEntity<ApiResponse<Object>> handleInvalidRequest(Exception ex) {
+		return ResponseEntity.badRequest().body(ApiResponse.error("Invalid request"));
+	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ApiResponse<Map<String, String>>> handleValidationExceptions(MethodArgumentNotValidException ex) {

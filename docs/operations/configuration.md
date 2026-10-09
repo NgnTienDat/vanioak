@@ -43,6 +43,10 @@ Suggested retry delays: `5s`, `30s`, `120s`. Keep them configurable.
 
 Validate request-byte and cache limits by load testing without changing the MVP batch limit.
 
+Ingestion maps `API_KEY_LOCAL_CACHE_TTL` to `vanioak.ingestion.api-key-local-cache-ttl` (positive Duration, default `5s`) and `API_KEY_LOCAL_CACHE_MAX_SIZE` to `vanioak.ingestion.api-key-local-cache-max-size` (positive integer, default `1000`). Local RAM entries contain only a SHA-256 key fingerprint and verified scope context. Their absolute expiry is the earlier of the local TTL and Identity's original `validUntil`, already bounded by Redis validation deadline and credential expiry. Neither local hits nor Identity Redis hits extend that deadline. Revocation and disabled-state changes take effect within this original bounded window; cache misses call the public Identity verification contract, and dependency failures fail closed with `503`.
+
+Ingestion maps `INGESTION_PUBLISH_CONFIRM_TIMEOUT` to `vanioak.ingestion.publish-confirm-timeout` (positive Duration with millisecond precision, default `5s`). The existing RabbitMQ connection/template uses correlated publisher confirms, publisher returns and mandatory persistent sends. Boot RabbitAdmin declares only durable `raw.exchange`/`raw.queue` and their `raw.log` binding. One HTTP request produces one raw batch message; `202` requires an ACK with no returned message. NACK, unroutable send, publish failure or confirmation timeout returns safe `503`. A timeout can follow broker acceptance; a new HTTP submission has new IDs, since the REST contract provides no idempotency key. The confirmation timeout bounds the confirm wait after send, not total socket-send/HTTP duration under a transport block. No queue-capacity/overflow policy or automatic publishing retry is configured.
+
 ## 4. Retention
 
 ```text

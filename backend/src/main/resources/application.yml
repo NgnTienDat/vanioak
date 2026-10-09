@@ -39,7 +39,11 @@ spring:
     password: "${RABBITMQ_PASSWORD}"
     connection-timeout: "${RABBITMQ_CONNECT_TIMEOUT:5s}"
     channel-rpc-timeout: "${RABBITMQ_CHANNEL_RPC_TIMEOUT:5s}"
-    dynamic: false
+    dynamic: true
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
   
 
 server:
@@ -64,6 +68,10 @@ springdoc:
     disable-swagger-default-url: true
 
 vanioak:
+  ingestion:
+    publish-confirm-timeout: "${INGESTION_PUBLISH_CONFIRM_TIMEOUT:5s}"
+    api-key-local-cache-ttl: "${API_KEY_LOCAL_CACHE_TTL:5s}"
+    api-key-local-cache-max-size: "${API_KEY_LOCAL_CACHE_MAX_SIZE:1000}"
   identity:
     api-key-cache-ttl: "${API_KEY_REDIS_CACHE_TTL:30s}"
     bootstrap-admin:

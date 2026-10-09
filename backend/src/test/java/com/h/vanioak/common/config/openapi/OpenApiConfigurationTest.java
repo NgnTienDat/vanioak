@@ -29,9 +29,12 @@ import com.h.vanioak.modules.identity.api.ApiKeyFacade;
 import com.h.vanioak.api.identity.security.IdentitySecurityConfig;
 import com.h.vanioak.modules.identity.api.AuthFacade;
 import com.h.vanioak.modules.identity.api.UserFacade;
+import com.h.vanioak.api.ingestion.IngestionController;
+import com.h.vanioak.api.ingestion.security.IngestionSecurityConfig;
+import com.h.vanioak.modules.ingestion.api.IngestionFacade;
 
-@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class})
-@Import({OpenApiConfiguration.class, IdentitySecurityConfig.class})
+@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class, IngestionController.class})
+@Import({OpenApiConfiguration.class, IdentitySecurityConfig.class, IngestionSecurityConfig.class})
 @ImportAutoConfiguration({ SpringDocConfiguration.class, SpringDocConfigProperties.class,
 		SpringDocWebMvcConfiguration.class, SwaggerConfig.class,
 		SwaggerUiConfigProperties.class, SwaggerUiOAuthProperties.class })
@@ -49,10 +52,17 @@ class OpenApiConfigurationTest {
 	private ApplicationFacade applications;
 	@MockitoBean
 	private ApiKeyFacade keys;
+	@MockitoBean
+	private IngestionFacade ingestion;
 
 	@Test
 	void runtimeDocsDescribeImplementedApis() throws Exception {
 		mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+				.andExpect(jsonPath("$.paths['/api/v1/logs'].post.security[0].apiKeyAuth").isArray())
+				.andExpect(jsonPath("$.paths['/api/v1/logs/batch'].post.security[0].apiKeyAuth").isArray())
+				.andExpect(jsonPath("$.paths['/api/v1/logs'].post.responses['202']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/logs/batch'].post.responses['202']").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/logs'].post.responses['200']").doesNotExist())
 				.andExpect(jsonPath("$.paths['/api/v1/users']").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].get.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].post").exists())
@@ -65,7 +75,6 @@ class OpenApiConfigurationTest {
 				.andExpect(jsonPath("$.paths['/api/v1/auth/login'].post.security").doesNotExist())
 				.andExpect(jsonPath("$.paths['/api/v1/auth/refresh'].post.security").doesNotExist())
 				.andExpect(jsonPath("$.paths['/api/v1/auth/logout'].post.security").doesNotExist())
-				.andExpect(jsonPath("$.paths['/api/v1/logs']").doesNotExist())
 				.andExpect(jsonPath("$.security").doesNotExist())
 				.andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
 				.andExpect(jsonPath("$.components.securitySchemes.apiKeyAuth.name").value("X-API-Key"));

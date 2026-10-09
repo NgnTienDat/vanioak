@@ -39,7 +39,7 @@ import tools.jackson.databind.ObjectMapper;
 @Slf4j
 public class ApiKeyService implements ApiKeyFacade {
 	private static final String CACHE_PREFIX = "vanioak:identity:api-key-lookup:";
-	private static final VerificationResult INVALID = new VerificationResult(false, null, null);
+	private static final VerificationResult INVALID = new VerificationResult(false, null, null, null, null, null);
 	private final IngestionCredentialRepository credentials;
 	private final ApplicationRepository applications;
 	private final EnvironmentRepository environments;
@@ -64,25 +64,32 @@ public class ApiKeyService implements ApiKeyFacade {
 	@Override
 	@Transactional(propagation = Propagation.NOT_SUPPORTED)
 	public VerificationResult verify(String rawApiKey) {
-		if (rawApiKey == null || !rawApiKey.matches("[0-9a-f]{16}\\.[A-Za-z0-9_-]{43}")) return INVALID;
+		if (rawApiKey == null || !rawApiKey.matches("[0-9a-f]{16}\\.[A-Za-z0-9_-]{43}"))
+			return INVALID;
 		String hash = hash(rawApiKey);
 		CachedCredential cached = cached(hash);
 		if (cached != null && cached.usable(Instant.now()))
-			return new VerificationResult(true, cached.applicationId(), cached.environmentId());
+			return cached.result();
 		Instant deadline = Instant.now().plus(cacheTtl);
 		var credential = credentials.findByKeyHash(hash).orElse(null);
-		if (credential == null || effectiveStatus(credential) != Status.ACTIVE) return INVALID;
+		if (credential == null || effectiveStatus(credential) != Status.ACTIVE)
+			return INVALID;
 		var environment = environments.findById(credential.getEnvironmentId()).orElse(null);
-		if (environment == null || environment.getStatus() != ApplicationFacade.Status.ACTIVE) return INVALID;
+		if (environment == null || environment.getStatus() != ApplicationFacade.Status.ACTIVE)
+			return INVALID;
 		var application = applications.findById(environment.getApplicationId()).orElse(null);
-		if (application == null || application.getStatus() != ApplicationFacade.Status.ACTIVE) return INVALID;
+		if (application == null || application.getStatus() != ApplicationFacade.Status.ACTIVE)
+			return INVALID;
 		if (credential.getExpiresAt() != null && credential.getExpiresAt().isBefore(deadline))
 			deadline = credential.getExpiresAt();
 		var context = new CachedCredential(environment.getApplicationId(), credential.getEnvironmentId(),
-				credential.getStatus(), application.getStatus(), environment.getStatus(), credential.getExpiresAt(), deadline);
-		if (credential.getExpiresAt() != null && !credential.getExpiresAt().isAfter(Instant.now())) return INVALID;
+				application.getName(), environment.getName(),
+				credential.getStatus(), application.getStatus(), environment.getStatus(), credential.getExpiresAt(),
+				deadline);
+		if (credential.getExpiresAt() != null && !credential.getExpiresAt().isAfter(Instant.now()))
+			return INVALID;
 		populate(hash, context);
-		return new VerificationResult(true, context.applicationId(), context.environmentId());
+		return context.result();
 	}
 
 	@Override
@@ -215,25 +222,32 @@ public class ApiKeyService implements ApiKeyFacade {
 		});
 	}
 
-	private record CachedCredential(UUID applicationId, UUID environmentId, Status credentialStatus,
+	private record CachedCredential(UUID applicationId, UUID environmentId, String applicationName,
+			ApplicationFacade.EnvironmentName environmentName, Status credentialStatus,
 			ApplicationFacade.Status applicationStatus, ApplicationFacade.Status environmentStatus,
 			Instant expiresAt, Instant deadline) {
 		boolean usable(Instant now) {
-			return applicationId != null && environmentId != null && credentialStatus == Status.ACTIVE
-					&& applicationStatus == ApplicationFacade.Status.ACTIVE && environmentStatus == ApplicationFacade.Status.ACTIVE
+			return applicationId != null && environmentId != null && applicationName != null && environmentName != null
+					&& credentialStatus == Status.ACTIVE
+					&& applicationStatus == ApplicationFacade.Status.ACTIVE
+					&& environmentStatus == ApplicationFacade.Status.ACTIVE
 					&& deadline != null && deadline.isAfter(now) && (expiresAt == null || expiresAt.isAfter(now));
+		}
+
+		VerificationResult result() {
+			return new VerificationResult(true, applicationId, environmentId, applicationName, environmentName, deadline);
 		}
 	}
 
 	private Status effectiveStatus(IngestionCredentialEntity credential) {
-		if (credential.getStatus() == Status.ACTIVE && credential.getExpiresAt() != null
-				&& !credential.getExpiresAt().isAfter(Instant.now())) return Status.EXPIRED;
+		if (credential.getStatus() == Status.ACTIVE && credential.getExpiresAt() != null && !credential.getExpiresAt().isAfter(Instant.now()))
+			return Status.EXPIRED;
 		return credential.getStatus();
 	}
 
 	private CredentialView view(IngestionCredentialEntity credential) {
 		return new CredentialView(credential.getId(), credential.getEnvironmentId(), credential.getKeyPrefix(),
-				effectiveStatus(credential), credential.getExpiresAt(), credential.getCreatedAt(), credential.getRevokedAt());
+				effectiveStatus(credential), credential.getExpiresAt(), credential.getCreatedAt(),
+				credential.getRevokedAt());
 	}
 }
-

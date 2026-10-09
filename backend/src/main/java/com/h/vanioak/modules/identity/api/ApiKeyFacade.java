@@ -12,7 +12,8 @@ public interface ApiKeyFacade {
 	CredentialView revoke(UUID credentialId);
 
 	enum Status { ACTIVE, REVOKED, EXPIRED }
-	record VerificationResult(boolean valid, UUID applicationId, UUID environmentId) { }
+	record VerificationResult(boolean valid, UUID applicationId, UUID environmentId, String applicationName,
+			ApplicationFacade.EnvironmentName environmentName, Instant validUntil) { }
 	record CredentialView(UUID id, UUID environmentId, String keyPrefix, Status status,
 			Instant expiresAt, Instant createdAt, Instant revokedAt) { }
 	record CredentialPage(List<CredentialView> items, String nextCursor) { }
