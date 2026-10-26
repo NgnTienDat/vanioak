@@ -82,6 +82,139 @@ class IngestionServiceTest {
 	}
 
 	@Test
+	void authenticatedLocalContextExpiringBeforeIngestRevalidatesOnceAndPublishesOnce() {
+		now.set(context.validUntil().minusMillis(2));
+		assertSame(context, service.authenticate("test-key"));
+		now.set(context.validUntil().minusMillis(1));
+		var authenticated = service.authenticate("test-key");
+		assertSame(context, authenticated);
+		assertTrue(authenticated.valid());
+		var refreshed = context(context.validUntil().plusSeconds(30));
+		when(identity.verify("test-key")).thenReturn(refreshed);
+		now.set(context.validUntil().plusMillis(1));
+		var result = service.ingest(authenticated, "test-key",
+				List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null)));
+
+		var capture = ArgumentCaptor.forClass(RawLogBatchEvent.class);
+		verify(publisher, times(1)).publish(capture.capture());
+		assertEquals(1, result.acceptedCount());
+		assertEquals(result.requestId(), capture.getValue().payload().requestId());
+		assertEquals(refreshed.applicationId(), capture.getValue().payload().applicationId());
+		assertEquals(refreshed.environmentId(), capture.getValue().payload().environmentId());
+		assertEquals(now.get(), capture.getValue().payload().receivedAt());
+		verify(identity, times(2)).verify("test-key");
+	}
+
+	@Test
+	void deadlineRevalidationRejectsInvalidCredentialsAndChangedBindingsWithoutPublishing() {
+		now.set(context.validUntil());
+		var refreshed = context(context.validUntil().plusSeconds(30));
+		for (VerificationResult rejected : new VerificationResult[] {
+				new VerificationResult(false, null, null, null, null, null),
+				new VerificationResult(true, refreshed.applicationId(), refreshed.environmentId(), "other", EnvironmentName.DEV, refreshed.validUntil()),
+				new VerificationResult(true, refreshed.applicationId(), refreshed.environmentId(), "example", EnvironmentName.TEST, refreshed.validUntil())}) {
+			when(identity.verify("test-key")).thenReturn(rejected);
+			var failure = assertThrows(IngestionException.class, () -> service.ingest(context, "test-key",
+					List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null))));
+			assertEquals(ErrorCode.INVALID_API_KEY, failure.getErrorCode());
+			assertEquals(401, failure.getErrorCode().getStatus().value());
+		}
+		verify(identity, times(3)).verify("test-key");
+		verifyNoInteractions(publisher);
+	}
+
+	@Test
+	void deadlineRevalidationFailsClosedOnDependencyFailure() {
+		now.set(context.validUntil());
+		when(identity.verify("test-key")).thenThrow(new DataAccessResourceFailureException("Private dependency detail"));
+		var failure = assertThrows(IngestionException.class, () -> service.ingest(context, "test-key", List.of()));
+		assertEquals(ErrorCode.DEPENDENCY_UNAVAILABLE, failure.getErrorCode());
+		assertEquals(503, failure.getErrorCode().getStatus().value());
+		assertEquals("Service unavailable", failure.getMessage());
+		verify(identity, times(1)).verify("test-key");
+		verifyNoInteractions(publisher);
+	}
+
+	@Test
+	void deadlineRevalidationRejectsMissingOrExpiredResultsWithoutRetry() {
+		now.set(context.validUntil());
+		for (VerificationResult unusable : new VerificationResult[] {null, context}) {
+			when(identity.verify("test-key")).thenReturn(unusable);
+			failure(ErrorCode.DEPENDENCY_UNAVAILABLE, () -> service.ingest(context, "test-key", List.of()));
+		}
+		verify(identity, times(2)).verify("test-key");
+		verifyNoInteractions(publisher);
+	}
+
+	@Test
+	void refreshedContextExpiringAgainFailsClosedWithoutAnotherLookup() {
+		var refreshed = context(context.validUntil().plusSeconds(1));
+		when(identity.verify("test-key")).thenReturn(refreshed);
+		when(clock.instant()).thenReturn(context.validUntil(), refreshed.validUntil().minusMillis(1), refreshed.validUntil());
+		failure(ErrorCode.DEPENDENCY_UNAVAILABLE, () -> service.ingest(context, "test-key", List.of()));
+		verify(identity, times(1)).verify("test-key");
+		verifyNoInteractions(publisher);
+	}
+
+	@Test
+	void deadlineRevalidationBypassesEvenARefreshedLocalCache() {
+		service.authenticate("test-key");
+		now.set(context.validUntil());
+		var refreshed = context(context.validUntil().plusSeconds(30));
+		when(identity.verify("test-key")).thenReturn(refreshed);
+		assertSame(refreshed, service.authenticate("test-key"));
+		when(identity.verify("test-key")).thenReturn(new VerificationResult(false, null, null, null, null, null));
+		failure(ErrorCode.INVALID_API_KEY, () -> service.ingest(context, "test-key", List.of()));
+		verify(identity, times(3)).verify("test-key");
+		verifyNoInteractions(publisher);
+	}
+
+	@Test
+	void publicationFailureAfterRevalidationNeverTriggersRevalidationOrPublicationRetry() {
+		var refreshed = context(context.validUntil().plusSeconds(30));
+		when(identity.verify("test-key")).thenReturn(refreshed);
+		now.set(context.validUntil());
+		org.mockito.Mockito.doAnswer(call -> {
+			now.set(refreshed.validUntil().plusMillis(1));
+			throw new IngestionException(ErrorCode.DEPENDENCY_UNAVAILABLE);
+		}).when(publisher).publish(org.mockito.ArgumentMatchers.any());
+		failure(ErrorCode.DEPENDENCY_UNAVAILABLE, () -> service.ingest(context, "test-key",
+				List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null))));
+		verify(identity, times(1)).verify("test-key");
+		verify(publisher, times(1)).publish(org.mockito.ArgumentMatchers.any());
+	}
+
+	@Test
+	void authenticatedLocalContextRemainingValidThroughIngestPublishesAndReturnsAcceptance() {
+		now.set(context.validUntil().minusMillis(2));
+		assertSame(context, service.authenticate("test-key"));
+		var authenticated = service.authenticate("test-key");
+		now.set(context.validUntil().minusMillis(1));
+		var result = service.ingest(authenticated, "test-key",
+				List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null)));
+
+		assertEquals(1, result.acceptedCount());
+		var capture = ArgumentCaptor.forClass(RawLogBatchEvent.class);
+		verify(publisher, times(1)).publish(capture.capture());
+		assertEquals(result.requestId(), capture.getValue().payload().requestId());
+		assertEquals(context.applicationId(), capture.getValue().payload().applicationId());
+		assertEquals(context.environmentId(), capture.getValue().payload().environmentId());
+		assertEquals(now.get(), capture.getValue().payload().receivedAt());
+		verify(identity, times(1)).verify("test-key");
+	}
+
+	@Test
+	void expiryDecisionAndBindingValidationUseTheSameInstant() {
+		var authenticated = service.authenticate("test-key");
+		when(clock.instant()).thenReturn(context.validUntil().minusMillis(1), context.validUntil());
+		var result = service.ingest(authenticated, "test-key",
+				List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null)));
+		assertEquals(1, result.acceptedCount());
+		verify(identity, times(1)).verify("test-key");
+		verify(publisher, times(1)).publish(org.mockito.ArgumentMatchers.any());
+	}
+
+	@Test
 	void boundsCacheSizeAndStoresOnlyFingerprintKeysAndVerifiedContext() {
 		service.authenticate("key-one");
 		service.authenticate("key-two");
@@ -168,7 +301,7 @@ class IngestionServiceTest {
 		var mapper = JsonMapper.builder().build();
 		var metadata = Map.of("nested", mapper.readTree("[null,true,3,{\"a\":\"b\"}]"));
 		var entry = new LogEntry("example", "dev", "source-host", "ERROR", "message", start.minusSeconds(2), "trace", metadata);
-		var result = service.ingest(context, List.of(entry, entry));
+		var result = service.ingest(context, "test-key", List.of(entry, entry));
 		var capture = ArgumentCaptor.forClass(RawLogBatchEvent.class);
 		verify(publisher).publish(capture.capture());
 		var event = capture.getValue();
@@ -193,19 +326,19 @@ class IngestionServiceTest {
 		assertEquals(start.minusSeconds(2).toString(), log.get("timestamp").asString());
 		assertEquals("trace", log.get("trace_id").asString());
 		assertEquals(mapper.valueToTree(metadata), log.get("metadata"));
-		var single = service.ingest(context, List.of(new LogEntry("example", "DEV", "host", "INFO", "", start, "", null)));
+		var single = service.ingest(context, "test-key", List.of(new LogEntry("example", "DEV", "host", "INFO", "", start, "", null)));
 		assertEquals(1, single.acceptedCount());
 		assertFalse(single.requestId().equals(result.requestId()));
 	}
 
 	@Test
 	void mismatchPublishesNothingAndPublisherFailureCannotReturnAcceptance() {
-		failure(ErrorCode.INVALID_API_KEY, () -> service.ingest(context,
+		failure(ErrorCode.INVALID_API_KEY, () -> service.ingest(context, "test-key",
 				List.of(new LogEntry("other", "DEV", "host", "INFO", "message", start, "trace", null))));
 		verifyNoInteractions(publisher);
 		doThrow(new IngestionException(ErrorCode.DEPENDENCY_UNAVAILABLE)).when(publisher)
 				.publish(org.mockito.ArgumentMatchers.any());
-		failure(ErrorCode.DEPENDENCY_UNAVAILABLE, () -> service.ingest(context,
+		failure(ErrorCode.DEPENDENCY_UNAVAILABLE, () -> service.ingest(context, "test-key",
 				List.of(new LogEntry("example", "DEV", "host", "INFO", "message", start, "trace", null))));
 	}
 

@@ -92,3 +92,7 @@ Given an OPEN Incident, when no matching error is observed for the configured `r
 ## AC17 — Health Analytics and Performance Validation
 
 Authorized users receive hourly total/ERROR/CRITICAL counts and Log Error Rate as defined in FR08. Validate sustained throughput and healthy-condition latency against NFR01–04 design targets, separately from the mandatory AC15 demo.
+
+For the separate NFR01 pipeline validation, demonstrate **>=1,000 accepted logs/s** and **>=1,000 searchable distinct logs/s** through Ingestion → RabbitMQ → Processing → ClickHouse over the same documented sustained window, with no sustained raw-backlog growth. After a bounded drain, reconcile all accepted log IDs with queryable records by stable `event_id`; HTTP `202` counts or downstream publication counts alone do not satisfy this criterion. Required processed/critical publishing remains enabled, including its effect on ACK/backlog, without expanding this benchmark to Realtime/Alert consumer performance.
+
+Report received-at-to-query-visibility p50/p95/p99 without adding a fixed end-to-end latency SLA. Follow the [sustained pipeline benchmark](testing.md#sustained-pipeline-benchmark), including the proposed 5-minute duration and recorded workload, batch sizes, severity mix, hardware, resource limits, drain deadline and stop conditions. Preserve at-least-once semantics; duplicate physical rows/events do not increase distinct-log throughput.

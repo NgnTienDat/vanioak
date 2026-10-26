@@ -126,6 +126,15 @@ Payload:
 
 Permanent/data errors go to DLQ with envelope `event_type: dead-letter.log`. Transient infrastructure errors use the retry path first.
 
+For Processing whole-batch failures, retain these five payload keys and the common envelope:
+
+- Envelope and payload `event_id` identify the raw batch: use its valid envelope UUID, otherwise a valid AMQP message ID. If neither exists, generate one DLQ accounting UUID for that transfer attempt. Do not replace per-log IDs inside the original batch.
+- `reason` is `INVALID_RAW_BATCH`, `INVALID_RETRY_METADATA` or `PROCESSING_RETRY_EXHAUSTED`; `field` is `$`, identifying the whole batch. Processing does not recover or persist a valid prefix of an invalid batch.
+- `original_message` is the complete original JSON object when parseable as one document, preserving numeric precision. Malformed or non-object input uses `{"body_base64":"<base64 of the exact original bytes>"}` instead. Do not truncate the body.
+- Producer is `processing`, schema version is `1`, and envelope `occurred_at` and payload `failed_at` use the same failure-time instant. Original log and ingestion timestamps remain inside `original_message` unchanged.
+
+Retry/DLQ copies may be duplicated after uncertain confirmation or a crash before the original ACK. Generated fallback DLQ IDs identify transfer attempts, not a new logical log.
+
 ## 5. Incident event for Realtime
 
 Alert emits an internal event to Realtime using the common envelope:

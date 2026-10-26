@@ -83,7 +83,7 @@ class IngestionSecurityTest {
 			assertNull(authentication.getCredentials());
 			assertFalse(authentication.getAuthorities().stream().anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN")));
 			return call.callRealMethod();
-		}).when(ingestion).validateBinding(any(), anyList());
+		}).when(ingestion).ingest(any(), anyString(), anyList());
 		var response = accepted(mvc.perform(post("/api/v1/logs").header("X-API-Key", key)
 				.contentType(MediaType.APPLICATION_JSON).content(LOG))).andReturn();
 		assertNull(response.getRequest().getSession(false));
@@ -92,6 +92,23 @@ class IngestionSecurityTest {
 		verify(identity, times(1)).verify(key);
 		verifyNoInteractions(humanAuth);
 		failure(mvc.perform(post("/api/v1/logs").contentType(MediaType.APPLICATION_JSON).content(LOG)), 401, "Invalid API key");
+	}
+
+	@Test
+	void contextExpiringAfterAuthenticationRevalidatesOriginalHeaderForBothEndpoints() throws Exception {
+		for (String suffix : new String[] {"", "/batch"}) {
+			String key = "deadline-key-" + UUID.randomUUID();
+			when(identity.verify(key)).thenReturn(context);
+			doAnswer(call -> {
+				VerificationResult authenticated = (VerificationResult) call.callRealMethod();
+				return new VerificationResult(true, authenticated.applicationId(), authenticated.environmentId(),
+						authenticated.applicationName(), authenticated.environmentName(), Instant.EPOCH);
+			}).when(ingestion).authenticate(key);
+			accepted(mvc.perform(post("/api/v1/logs" + suffix).header("X-API-Key", key)
+					.contentType(MediaType.APPLICATION_JSON).content(suffix.isEmpty() ? LOG : "{\"logs\":[" + LOG + "]}")));
+			verify(identity, times(2)).verify(key);
+		}
+		verify(publisher, times(2)).publish(any());
 	}
 
 	@Test

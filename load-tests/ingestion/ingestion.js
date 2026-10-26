@@ -1,6 +1,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
+import execution from 'k6/execution';
 
 function required(name) {
   const value = __ENV[name];
@@ -42,12 +43,19 @@ const preAllocatedVUs = positiveInteger('PRE_ALLOCATED_VUS', mode === 'single' ?
 const maxVUs = positiveInteger('MAX_VUS', mode === 'single' ? 1000 : 200);
 if (maxVUs < preAllocatedVUs) throw new Error('MAX_VUS must be at least PRE_ALLOCATED_VUS');
 const endpoint = `/api/v1/logs${mode === 'batch' ? '/batch' : ''}`;
-const runId = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+const runId = __ENV.RUN_ID || Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+if (!/^[0-9a-f]{8}$/.test(runId)) throw new Error('RUN_ID must contain eight lowercase hexadecimal characters');
+const levels = (__ENV.LEVELS || 'INFO').split(',');
+if (!levels.length || levels.some((level) => !['INFO', 'WARN', 'ERROR', 'CRITICAL'].includes(level))) {
+  throw new Error('LEVELS must be a comma-separated list of canonical levels');
+}
 const successfulRequests = new Counter('successful_requests');
 const failedRequests = new Counter('failed_requests');
 const acceptedLogs = new Counter('accepted_logs');
+const acceptedTraceBatches = new Counter('accepted_trace_batches');
 const errorRate = new Rate('ingestion_error_rate');
 const completionTime = new Trend('http_completion_ms', true);
+const requestTiming = new Trend('request_timing_ms', true);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const options = {
@@ -76,7 +84,7 @@ export default function () {
     application,
     environment,
     host_ip: '192.0.2.10',
-    level: 'INFO',
+    level: levels[(__ITER * logsPerRequest + index) % levels.length],
     message: 'Order request completed successfully',
     timestamp,
     trace_id: runId + __VU.toString(16).padStart(8, '0')
@@ -92,7 +100,8 @@ export default function () {
     tags: { name: endpoint },
     responseCallback: http.expectedStatuses(202),
   });
-  const elapsed = Date.now() - startedAt;
+  const completedAt = Date.now();
+  const elapsed = completedAt - startedAt;
   let accepted = false;
   if (response.status === 202) {
     try {
@@ -106,11 +115,21 @@ export default function () {
     }
   }
   completionTime.add(elapsed);
+  if (__ENV.RECORD_REQUEST_TIMES === 'true') {
+    requestTiming.add(elapsed, {
+      scenario_start_ms: String(execution.scenario.startTime),
+      started_ms: String(startedAt), completed_ms: String(completedAt),
+      trace_prefix: logs[0].trace_id.slice(0, 28), accepted: String(accepted),
+    });
+  }
   check(response, { '202 with valid acceptance envelope': () => accepted });
   successfulRequests.add(accepted ? 1 : 0);
   failedRequests.add(accepted ? 0 : 1);
   acceptedLogs.add(accepted ? logsPerRequest : 0);
   errorRate.add(!accepted);
+  if (accepted && __ENV.RECORD_ACCEPTED_TRACES === 'true') {
+    acceptedTraceBatches.add(logsPerRequest, { trace_prefix: logs[0].trace_id.slice(0, 28) });
+  }
 }
 
 export function handleSummary(data) {
@@ -122,6 +141,8 @@ export function handleSummary(data) {
   const p95 = latency('http_completion_ms') && latency('http_completion_ms')['p(95)'];
   const report = {
     configuration: {
+      run_id: runId,
+      levels,
       base_url: baseUrl,
       application,
       environment,

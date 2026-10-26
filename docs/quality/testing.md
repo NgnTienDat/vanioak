@@ -73,6 +73,18 @@ This is a capacity/design validation, not a claim that every developer laptop mu
 
 Benchmark single-log and batch requests; measure ingestion p95, eligible alert latency, and search p95 against NFR02–04 under their stated healthy conditions.
 
+### Sustained Pipeline Benchmark
+
+Validate the separate NFR01 pipeline target for **Ingestion → RabbitMQ → Processing → ClickHouse**:
+
+- Propose a **5-minute sustained measurement window**. Record the actual duration and any warm-up separately; exclude warm-up and post-generation drain from the sustained throughput calculation.
+- Record offered load, payload size, application/environment distribution, single/batch request sizes, logs per raw message, severity mix, build, hardware, dependency resources, worker/prefetch settings and resource limits. State the bounded drain deadline and stop conditions, including backlog/resource limits and persistent errors, before execution.
+- Measure accepted logs/s from confirmed HTTP acceptance, counting batch items rather than requests. Independently measure searchable logs/s from newly query-visible distinct stable `event_id` values in run-owned ClickHouse records over the same window. Both sustained rates must be **>=1,000 logs/s**; HTTP acceptance alone or a final count after drain cannot establish pipeline capacity.
+- Preserve throughput and queue time series. Raw ready and unacknowledged counts must show no sustained backlog growth; interpret message counts using their log counts/batch distribution rather than assuming one message equals one log. Record retry/DLQ outcomes and failed or uncertain HTTP requests.
+- After stopping generation, reconcile the complete accepted-log ID set with searchable ClickHouse records within the declared drain deadline. Record how accepted inputs are correlated to their assigned `event_id`; aggregate count equality alone is insufficient. Deduplicate by stable `event_id`, report missing/unexpected IDs and observed duplicates, and do not claim exactly-once delivery.
+- Measure p50/p95/p99 from each log's ingestion `received_at` to its first observed ClickHouse query visibility. Record polling resolution, observer overhead and clock assumptions. `processed_at`, insert completion and downstream event observation are not substitutes for query visibility; no fixed end-to-end latency SLA is introduced.
+- Keep the production processed/critical publication and confirmation behavior enabled. Observe its effect on raw ACKs and backlog, but do not use publication counts as the primary throughput metric. Document downstream queue draining/observation so absent consumers do not distort the run; Realtime/Alert consumer performance is evaluated separately.
+
 ## 7. Definition of Done
 
 A feature is done when:

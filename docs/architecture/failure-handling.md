@@ -61,6 +61,8 @@ Permanent validation failures such as malformed payloads, missing required field
 
 They are data-quality failures, not application ERROR/CRITICAL incidents.
 
+Processing validates each complete raw batch before submitting any records. An invalid envelope or any invalid log produces one whole-batch DLQ event using the representation in [Event Contracts](../contracts/event-contracts.md#4-invalid-log--dlq-event), including a lossless base64 wrapper when the original body is not a JSON object. There is no valid-prefix recovery. An invalid retry counter is also a permanent whole-batch failure. Transient persistence/publication failures retry the original complete raw body; successful earlier inserts/publications may be duplicated. ACK-readiness requires either all persistence/publication steps or a confirmed retry/DLQ transfer. Unconfirmed transfer or shutdown must leave the original eligible for broker redelivery.
+
 ## 6. At-Least-Once / Idempotency
 
 A worker may fail after a side effect succeeds but before ACK, so RabbitMQ may redeliver the same `event_id`.

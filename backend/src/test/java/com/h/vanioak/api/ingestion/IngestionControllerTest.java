@@ -28,6 +28,7 @@ import com.h.vanioak.modules.ingestion.api.IngestionFacade;
 import com.h.vanioak.modules.ingestion.api.IngestionFacade.Acceptance;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -51,7 +52,7 @@ class IngestionControllerTest {
 
 	@BeforeEach
 	void setup() {
-		when(ingestion.ingest(any(), anyList())).thenAnswer(call -> new Acceptance(UUID.randomUUID(), ((List<?>) call.getArgument(1)).size()));
+		when(ingestion.ingest(any(), anyString(), anyList())).thenAnswer(call -> new Acceptance(UUID.randomUUID(), ((List<?>) call.getArgument(2)).size()));
 		SecurityContextHolder.getContext().setAuthentication(
 				UsernamePasswordAuthenticationToken.authenticated(context, null, List.of()));
 		mvc = MockMvcBuilders.standaloneSetup(new IngestionController(ingestion))
@@ -67,20 +68,34 @@ class IngestionControllerTest {
 		accepted(request("", VALID));
 		request("", VALID).andExpect(jsonPath("$.data.*", hasSize(2)))
 				.andExpect(jsonPath("$.data.accepted_count").doesNotExist());
-		verify(ingestion, org.mockito.Mockito.times(2)).ingest(eq(context), argThat(logs -> logs.size() == 1 && logs.getFirst().application().equals("example") && logs.getFirst().environment().equals("DEV")));
+		verify(ingestion, org.mockito.Mockito.times(2)).ingest(eq(context), eq("test-only-api-key"), argThat(logs -> logs.size() == 1 && logs.getFirst().application().equals("example") && logs.getFirst().environment().equals("DEV")));
 		accepted(request("/batch", "{\"logs\":[" + VALID + "]}"));
 		request("/batch", "{\"logs\":[" + VALID + "]}").andExpect(jsonPath("$.data.*", hasSize(3)))
 				.andExpect(jsonPath("$.data.accepted_count").value(1));
+		verify(ingestion, org.mockito.Mockito.times(4)).ingest(eq(context), eq("test-only-api-key"),
+				argThat(logs -> logs.size() == 1));
 		accepted(request("/batch", "{\"logs\":[" + String.join(",", Collections.nCopies(1000, VALID)) + "]}"));
+	}
+
+	@Test
+	void rejectedRevalidationUsesExistingUnauthorizedEnvelope() throws Exception {
+		org.mockito.Mockito.doThrow(new com.h.vanioak.modules.ingestion.api.IngestionException(
+				com.h.vanioak.modules.ingestion.api.ErrorCode.INVALID_API_KEY)).when(ingestion).ingest(any(), anyString(), anyList());
+		for (String suffix : List.of("", "/batch")) {
+			request(suffix, suffix.isEmpty() ? VALID : "{\"logs\":[" + VALID + "]}")
+					.andExpect(status().isUnauthorized()).andExpect(jsonPath("$.success").value(false))
+					.andExpect(jsonPath("$.message").value("Invalid API key"))
+					.andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
+		}
 	}
 
 	@Test
 	void publisherUnavailableAndUnexpectedErrorsUseExistingSafeEnvelopes() throws Exception {
 		org.mockito.Mockito.doThrow(new com.h.vanioak.modules.ingestion.api.IngestionException(
-				com.h.vanioak.modules.ingestion.api.ErrorCode.DEPENDENCY_UNAVAILABLE)).when(ingestion).ingest(any(), anyList());
+				com.h.vanioak.modules.ingestion.api.ErrorCode.DEPENDENCY_UNAVAILABLE)).when(ingestion).ingest(any(), anyString(), anyList());
 		request("", VALID).andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.message").value("Service unavailable")).andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
-		org.mockito.Mockito.doThrow(new IllegalStateException("Private publisher detail")).when(ingestion).ingest(any(), anyList());
+		org.mockito.Mockito.doThrow(new IllegalStateException("Private publisher detail")).when(ingestion).ingest(any(), anyString(), anyList());
 		request("/batch", "{\"logs\":[" + VALID + "]}").andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.message").value("An unexpected error occurred"));
 	}

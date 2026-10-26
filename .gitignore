@@ -4,3 +4,4 @@
 .local/
 backend/target/
 docs/plans/
+load-tests/

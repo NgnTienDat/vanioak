@@ -97,6 +97,14 @@ For `alert.queue`, transient Redis/PostgreSQL/consumer failures use `alert.retry
 
 The original message is considered handled only after successful retry/DLQ accounting.
 
+### Processing retry implementation
+
+`PROCESSING_RETRY_MAX_ATTEMPTS=3` means three retries after the initial attempt. The integer AMQP header `x-processing-retry-count` is zero when absent; retry copies carry counts 1, 2 and 3 with per-message expiration delays of `5s`, `30s` and `120s` by default. Delays are configurable minimum waits: messages expire at the head of the single retry queue, so a shorter delay can wait behind a longer one. Do not use `redelivered` or broker `x-death` as this counter. Malformed, negative or out-of-range counters go to whole-batch DLQ with `INVALID_RETRY_METADATA`; failure at the retry bound uses `PROCESSING_RETRY_EXHAUSTED`.
+
+Publish persistent, mandatory retry copies through the existing default exchange (`""`) with routing key `raw.retry.queue`, preserving the exact raw body and original message ID. Declare this durable queue as quorum with `x-dead-letter-strategy=at-least-once`, `x-overflow=reject-publish`, `x-dead-letter-exchange=raw.exchange` and `x-dead-letter-routing-key=raw.log`. RabbitMQ 4.2 prerequisites, including the `stream_queue` feature flag and compatible queue arguments/policies, must be verified before activation. An incompatible existing queue must not be deleted or migrated by the application. Keep existing raw/downstream bindings unchanged. These settings retain expired messages until forwarding is confirmed; default at-most-once dead-letter forwarding is insufficient for this handoff. See [RabbitMQ quorum dead-lettering](https://www.rabbitmq.com/docs/4.2/quorum-queues#dead-lettering).
+
+Whole invalid batches go directly to `dead-letter.exchange` / `dead-letter.log`; the durable queue is `dead-letter.queue`. Retry/DLQ publication needs an ACK without a mandatory return before the source delivery becomes ACK-ready. If transfer is unconfirmed, keep the source unacknowledged for the first configured retry delay (5s when retries are disabled), then requeue individually. A separate timer prevents synchronous publication from starving this cooldown. Uncertain transfers can duplicate both copies; there is no exactly-once or global physical-attempt bound.
+
 ## 6. Critical Flow
 
 ERROR/CRITICAL events use a separate exchange/queue:

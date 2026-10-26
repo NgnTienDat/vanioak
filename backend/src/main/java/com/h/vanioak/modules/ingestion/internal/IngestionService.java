@@ -64,15 +64,7 @@ public class IngestionService implements IngestionFacade {
 			if (hit != null && hit.expiresAt().isAfter(clock.instant())) return hit.context();
 			cache.remove(fingerprint);
 		}
-		VerificationResult context;
-		try {
-			context = identity.verify(rawApiKey);
-		} catch (RuntimeException ex) {
-			log.warn("Identity credential lookup unavailable: {}", ex.getClass().getSimpleName());
-			throw new IngestionException(ErrorCode.DEPENDENCY_UNAVAILABLE);
-		}
-		if (context != null && !context.valid()) throw new IngestionException(ErrorCode.INVALID_API_KEY);
-		requireUsable(context);
+		VerificationResult context = verifyCredential(rawApiKey);
 		Instant expiry = clock.instant().plus(cacheTtl);
 		if (context.validUntil().isBefore(expiry)) expiry = context.validUntil();
 		synchronized (cache) {
@@ -84,17 +76,20 @@ public class IngestionService implements IngestionFacade {
 
 	@Override
 	public void validateBinding(VerificationResult context, List<LogScope> scopes) {
-		requireUsable(context);
-		for (LogScope scope : scopes) {
-			if (!context.applicationName().equals(scope.application()) || scope.environment() == null
-					|| !context.environmentName().name().equals(scope.environment().toUpperCase(Locale.ROOT)))
-				throw new IngestionException(ErrorCode.INVALID_API_KEY);
-		}
+		validateBinding(context, scopes, clock.instant());
 	}
 
 	@Override
-	public Acceptance ingest(VerificationResult context, List<LogEntry> logs) {
-		validateBinding(context, logs.stream().map(log -> new LogScope(log.application(), log.environment())).toList());
+	public Acceptance ingest(VerificationResult context, String rawApiKey, List<LogEntry> logs) {
+		Instant validationTime = clock.instant();
+		if (context != null && context.valid() && context.validUntil() != null
+				&& !context.validUntil().isAfter(validationTime)) {
+			// Refresh only before publication; a publication failure must never trigger a replay.
+			context = verifyCredential(rawApiKey);
+			validationTime = clock.instant();
+		}
+		validateBinding(context, logs.stream().map(log -> new LogScope(log.application(), log.environment())).toList(),
+				validationTime);
 		UUID requestId = UUID.randomUUID();
 		Instant receivedAt = clock.instant();
 		var items = logs.stream().map(log -> new RawLogBatchEvent.Log(UUID.randomUUID(), log.hostIp(), log.level(),
@@ -106,10 +101,37 @@ public class IngestionService implements IngestionFacade {
 		return new Acceptance(requestId, items.size());
 	}
 
+	private void validateBinding(VerificationResult context, List<LogScope> scopes, Instant validationTime) {
+		requireUsable(context, validationTime);
+		for (LogScope scope : scopes) {
+			if (!context.applicationName().equals(scope.application()) || scope.environment() == null
+					|| !context.environmentName().name().equals(scope.environment().toUpperCase(Locale.ROOT)))
+				throw new IngestionException(ErrorCode.INVALID_API_KEY);
+		}
+	}
+
+	private VerificationResult verifyCredential(String rawApiKey) {
+		if (rawApiKey == null || rawApiKey.isEmpty()) throw new IngestionException(ErrorCode.INVALID_API_KEY);
+		VerificationResult context;
+		try {
+			context = identity.verify(rawApiKey);
+		} catch (RuntimeException ex) {
+			log.warn("Identity credential lookup unavailable: {}", ex.getClass().getSimpleName());
+			throw new IngestionException(ErrorCode.DEPENDENCY_UNAVAILABLE);
+		}
+		if (context != null && !context.valid()) throw new IngestionException(ErrorCode.INVALID_API_KEY);
+		requireUsable(context);
+		return context;
+	}
+
 	private void requireUsable(VerificationResult context) {
+		requireUsable(context, clock.instant());
+	}
+
+	private void requireUsable(VerificationResult context, Instant validationTime) {
 		if (context == null || !context.valid() || context.applicationId() == null || context.environmentId() == null
 				|| context.applicationName() == null || context.environmentName() == null || context.validUntil() == null
-				|| !context.validUntil().isAfter(clock.instant()))
+				|| !context.validUntil().isAfter(validationTime))
 			throw new IngestionException(ErrorCode.DEPENDENCY_UNAVAILABLE);
 	}
 
