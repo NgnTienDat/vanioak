@@ -33,7 +33,7 @@ import com.h.vanioak.api.ingestion.IngestionController;
 import com.h.vanioak.api.ingestion.security.IngestionSecurityConfig;
 import com.h.vanioak.modules.ingestion.api.IngestionFacade;
 
-@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class, IngestionController.class})
+@WebMvcTest({UserController.class, AuthController.class, ApplicationController.class, ApiKeyController.class, IngestionController.class,com.h.vanioak.api.analysis.AnalysisController.class})
 @Import({OpenApiConfiguration.class, IdentitySecurityConfig.class, IngestionSecurityConfig.class})
 @ImportAutoConfiguration({ SpringDocConfiguration.class, SpringDocConfigProperties.class,
 		SpringDocWebMvcConfiguration.class, SwaggerConfig.class,
@@ -56,10 +56,13 @@ class OpenApiConfigurationTest {
 	private ApiKeyFacade keys;
 	@MockitoBean
 	private IngestionFacade ingestion;
+    @MockitoBean private com.h.vanioak.api.analysis.AnalysisApiService analysis;
 
 	@Test
 	void runtimeDocsDescribeImplementedApis() throws Exception {
 		mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/logs'].get.security[0].bearerAuth").isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/analytics/health'].get.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/logs'].post.security[0].apiKeyAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/logs/batch'].post.security[0].apiKeyAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/logs'].post.responses['202']").exists())
