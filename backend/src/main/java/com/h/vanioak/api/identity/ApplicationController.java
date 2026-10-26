@@ -1,6 +1,10 @@
 package com.h.vanioak.api.identity;
 
 import java.util.UUID;
+import java.security.Principal;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import com.h.vanioak.modules.identity.api.ApplicationAccessFacade;
+import com.h.vanioak.api.identity.dto.ActionResponse;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +40,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 @RequiredArgsConstructor
 public class ApplicationController {
 	private final ApplicationFacade applications;
+	private final ApplicationAccessFacade access;
 
 	@PostMapping
 	public ResponseEntity<ApiResponse<ApplicationResponse>> create(@Valid @RequestBody CreateApplicationRequest request) {
@@ -44,9 +49,9 @@ public class ApplicationController {
 	}
 
 	@GetMapping
-	public ApiResponse<ApplicationListResponse> list(@RequestParam(required = false) Status status,
+	public ApiResponse<ApplicationListResponse> list(Principal principal, @RequestParam(required = false) Status status,
 			@RequestParam(required = false) String cursor, @RequestParam(defaultValue = "50") int limit) {
-		var page = applications.list(status, cursor, limit);
+		var page = applications.list(UUID.fromString(principal.getName()), status, cursor, limit);
 		return ApiResponse.success(new ApplicationListResponse(page.items().stream().map(this::response).toList(), page.nextCursor()));
 	}
 
@@ -55,6 +60,18 @@ public class ApplicationController {
 			@Valid @RequestBody UpdateApplicationRequest request) {
 		return ApiResponse.success(response(applications.update(applicationId,
 				new UpdateApplication(request.getName(), request.getDescription(), request.getStatus()))));
+	}
+
+	@PostMapping("/{applicationId}/engineers/{userId}")
+	public ApiResponse<ActionResponse> assign(Principal principal, @PathVariable UUID applicationId, @PathVariable UUID userId) {
+		var assignment = access.assign(UUID.fromString(principal.getName()), applicationId, userId);
+		return ApiResponse.success(new ActionResponse(assignment.userId(), assignment.applicationId()));
+	}
+
+	@DeleteMapping("/{applicationId}/engineers/{userId}")
+	public ApiResponse<ActionResponse> revoke(Principal principal, @PathVariable UUID applicationId, @PathVariable UUID userId) {
+		var assignment = access.revoke(UUID.fromString(principal.getName()), applicationId, userId);
+		return ApiResponse.success(new ActionResponse(assignment.userId(), assignment.applicationId()));
 	}
 
 	private ApplicationResponse response(ApplicationView application) {

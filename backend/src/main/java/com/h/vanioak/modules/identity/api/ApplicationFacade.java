@@ -5,7 +5,7 @@ import java.util.UUID;
 
 public interface ApplicationFacade {
 	ApplicationView create(CreateApplication command);
-	ApplicationPage list(Status status, String cursor, int limit);
+	ApplicationPage list(UUID actorId, Status status, String cursor, int limit);
 	ApplicationView update(UUID id, UpdateApplication command);
 
 	enum Status { ACTIVE, DISABLED }

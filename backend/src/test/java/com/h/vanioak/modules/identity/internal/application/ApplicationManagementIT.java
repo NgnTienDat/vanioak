@@ -41,11 +41,21 @@ import com.h.vanioak.modules.identity.api.IdentityException;
 		"spring.flyway.enabled=true", "spring.jpa.hibernate.ddl-auto=validate"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(ApplicationService.class)
+@Import({ApplicationService.class, com.h.vanioak.modules.identity.internal.access.ApplicationAccessService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ApplicationManagementIT {
 	@Autowired
 	private ApplicationFacade applications;
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.h.vanioak.modules.identity.internal.user.UserRepository actors;
+	private final UUID actorId = UUID.randomUUID();
+	@org.junit.jupiter.api.BeforeEach
+	void caller() {
+		var actor = org.mockito.Mockito.mock(com.h.vanioak.modules.identity.internal.user.UserEntity.class);
+		org.mockito.Mockito.when(actor.getRole()).thenReturn("ADMIN");
+		org.mockito.Mockito.when(actor.getStatus()).thenReturn(com.h.vanioak.modules.identity.api.UserFacade.Status.ACTIVE);
+		org.mockito.Mockito.when(actors.findById(actorId)).thenReturn(java.util.Optional.of(actor));
+	}
 	@Autowired
 	private ApplicationRepository repository;
 	@MockitoSpyBean
@@ -104,11 +114,11 @@ class ApplicationManagementIT {
 		assertEquals(6, count);
 		applications.update(first.id(), new UpdateApplication(null, null, Status.DISABLED));
 		applications.update(second.id(), new UpdateApplication(null, null, Status.DISABLED));
-		var page = applications.list(Status.DISABLED, null, 1);
+		var page = applications.list(actorId, Status.DISABLED, null, 1);
 		assertEquals(1, page.items().size());
 		assertEquals(Status.DISABLED, page.items().getFirst().status());
 		assertNotNull(page.nextCursor());
-		var next = applications.list(Status.DISABLED, page.nextCursor(), 1);
+		var next = applications.list(actorId, Status.DISABLED, page.nextCursor(), 1);
 		assertEquals(1, next.items().size());
 		assertNotEquals(page.items().getFirst().id(), next.items().getFirst().id());
 	}

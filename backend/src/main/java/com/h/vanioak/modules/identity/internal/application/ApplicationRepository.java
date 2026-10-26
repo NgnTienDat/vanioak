@@ -19,5 +19,13 @@ public interface ApplicationRepository extends JpaRepository<ApplicationEntity, 
 			and (:after is null or a.id > :after) order by a.id asc
 			""")
 	List<ApplicationEntity> findApplications(@Param("status") Status status, @Param("after") UUID after, Pageable pageable);
+    @Query("""
+            select a from ApplicationEntity a
+            where (:status is null or a.status = :status)
+            and (:after is null or a.id > :after)
+            and exists (select ua from UserApplicationAccessEntity ua where ua.applicationId = a.id and ua.userId = :userId)
+            order by a.id asc
+            """)
+    List<ApplicationEntity> findAssignedApplications(@Param("userId") UUID userId, @Param("status") Status status,
+            @Param("after") UUID after, Pageable pageable);
 }
-

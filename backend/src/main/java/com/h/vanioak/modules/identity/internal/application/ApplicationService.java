@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.h.vanioak.modules.identity.api.ApplicationFacade;
+import com.h.vanioak.modules.identity.internal.access.ApplicationAccessService;
 import com.h.vanioak.modules.identity.api.ErrorCode;
 import com.h.vanioak.modules.identity.api.IdentityException;
 
@@ -25,6 +26,7 @@ import lombok.RequiredArgsConstructor;
 public class ApplicationService implements ApplicationFacade {
 	private final ApplicationRepository applications;
 	private final EnvironmentRepository environments;
+	private final ApplicationAccessService access;
 
 	@Override
 	@Transactional
@@ -40,7 +42,7 @@ public class ApplicationService implements ApplicationFacade {
 	}
 
 	@Override
-	public ApplicationPage list(Status status, String cursor, int limit) {
+	public ApplicationPage list(UUID actorId, Status status, String cursor, int limit) {
 		if (limit < 1 || limit > 100) throw new IdentityException(ErrorCode.INVALID_REQUEST);
 		UUID after = null;
 		if (cursor != null) {
@@ -52,7 +54,10 @@ public class ApplicationService implements ApplicationFacade {
 				throw new IdentityException(ErrorCode.INVALID_CURSOR);
 			}
 		}
-		var page = applications.findApplications(status, after, PageRequest.of(0, limit + 1));
+		var actor = access.currentUser(actorId);
+		var page = "ADMIN".equals(actor.getRole())
+				? applications.findApplications(status, after, PageRequest.of(0, limit + 1))
+				: applications.findAssignedApplications(actorId, status, after, PageRequest.of(0, limit + 1));
 		var selected = page.stream().limit(limit).toList();
 		var rows = selected.isEmpty() ? List.<EnvironmentEntity>of()
 				: environments.findByApplicationIdIn(selected.stream().map(ApplicationEntity::getId).toList());

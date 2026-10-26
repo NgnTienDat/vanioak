@@ -36,6 +36,7 @@ import com.h.vanioak.modules.identity.api.IdentityException;
 
 class ApplicationControllerTest {
 	private final ApplicationFacade applications = mock(ApplicationFacade.class);
+	private final com.h.vanioak.modules.identity.api.ApplicationAccessFacade access = mock(com.h.vanioak.modules.identity.api.ApplicationAccessFacade.class);
 	private final UUID id = UUID.randomUUID();
 	private final ApplicationView view = new ApplicationView(id, " app ", null, Status.ACTIVE,
 			List.of(new EnvironmentView(UUID.randomUUID(), EnvironmentName.DEV, Status.ACTIVE),
@@ -45,7 +46,8 @@ class ApplicationControllerTest {
 
 	@BeforeEach
 	void setup() {
-		mvc = MockMvcBuilders.standaloneSetup(new ApplicationController(applications))
+		mvc = MockMvcBuilders.standaloneSetup(new ApplicationController(applications, access))
+				.defaultRequest(get("/").principal(() -> id.toString()))
 				.setControllerAdvice(new IdentityExceptionHandler(), new GlobalExceptionHandler()).build();
 	}
 
@@ -61,13 +63,13 @@ class ApplicationControllerTest {
 				.andExpect(jsonPath("$.data.environments[0].*", hasSize(3)))
 				.andExpect(jsonPath("$.data.environments[0].name").value("DEV"));
 		verify(applications).create(new CreateApplication(" app ", null));
-		when(applications.list(Status.DISABLED, "opaque", 2)).thenReturn(new ApplicationPage(List.of(view), null));
+		when(applications.list(id, Status.DISABLED, "opaque", 2)).thenReturn(new ApplicationPage(List.of(view), null));
 		mvc.perform(get("/api/v1/applications").param("status", "DISABLED").param("cursor", "opaque").param("limit", "2"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.*", hasSize(2)))
 				.andExpect(jsonPath("$.data.items", hasSize(1)))
 				.andExpect(jsonPath("$.data.next_cursor").value(org.hamcrest.Matchers.nullValue()))
 				.andExpect(jsonPath("$.data.nextCursor").doesNotExist());
-		verify(applications).list(Status.DISABLED, "opaque", 2);
+		verify(applications).list(id, Status.DISABLED, "opaque", 2);
 	}
 
 	@Test
@@ -113,11 +115,28 @@ class ApplicationControllerTest {
 		mvc.perform(patch("/api/v1/applications/" + id).contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isNotFound()).andExpect(jsonPath("$.message").value("Application not found"))
 				.andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
-		when(applications.list(any(), any(), anyInt())).thenThrow(new IllegalStateException("internal test detail"));
+		when(applications.list(org.mockito.ArgumentMatchers.eq(id), any(), any(), anyInt())).thenThrow(new IllegalStateException("internal test detail"));
 		mvc.perform(get("/api/v1/applications")).andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.success").value(false))
 				.andExpect(jsonPath("$.message").value("An unexpected error occurred"))
 				.andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
 	}
+    @Test
+    void assignmentAndRevocationForwardAuthenticatedCallerAndReturnContractIds() throws Exception {
+        var target=UUID.randomUUID();
+        var pair=new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.Assignment(target,id);
+        when(access.assign(id,id,target)).thenReturn(pair);when(access.revoke(id,id,target)).thenReturn(pair);
+        String route="/api/v1/applications/"+id+"/engineers/"+target;
+        mvc.perform(post(route)).andExpect(status().isOk()).andExpect(jsonPath("$.data.user_id").value(target.toString()))
+            .andExpect(jsonPath("$.data.application_id").value(id.toString()));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(route)).andExpect(status().isOk());
+        verify(access).assign(id,id,target);verify(access).revoke(id,id,target);
+    }
+    @Test
+    void malformedAssignmentUuidFailsClosedWithoutChangingGlobalHandler() throws Exception {
+        mvc.perform(post("/api/v1/applications/not-a-uuid/engineers/"+id)).andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.success").value(false));verifyNoInteractions(access);
+    }
+
 }
 
