@@ -5,6 +5,18 @@
 - Target sustained ingestion: **1,000 logs/second**.
 - The required demo is defined in [MVP Scope](mvp-scope.md); benchmark coverage is defined in [Testing Strategy](../quality/testing.md).
 
+### Sustained Pipeline Performance Validation
+
+Separately validate **Ingestion → RabbitMQ → Processing → ClickHouse** under a documented benchmark workload:
+
+- Sustain **at least 1,000 accepted logs/second** and **at least 1,000 searchable distinct logs/second** over the same measurement window. Successful pipeline throughput counts distinct stable `event_id` values first observed persisted and queryable in ClickHouse, not HTTP `202` responses, physical row copies or downstream publication counts.
+- RabbitMQ raw backlog must remain stable without sustained growth. Record ready and unacknowledged counts and account for the number of logs per raw message.
+- After a bounded drain, reconcile all accepted log IDs with searchable ClickHouse records, deduplicating by stable `event_id`. At-least-once delivery remains unchanged; this is not an exactly-once guarantee.
+- Report p50/p95/p99 latency from ingestion `received_at` to ClickHouse query visibility. No fixed end-to-end latency SLA is defined; NFR02 remains the separate HTTP-to-RabbitMQ-confirm target.
+- Keep required processed/critical publishing enabled. Its effect on raw ACK timing and backlog is part of the real pipeline, but downstream publication is not the primary throughput metric. Realtime and Alert consumer performance is outside this validation.
+
+Use a **proposed 5-minute sustained benchmark**, with the chosen duration, workload, batch sizes, severity mix, hardware, resource limits, drain deadline and stop conditions explicitly recorded according to [Testing Strategy](../quality/testing.md#sustained-pipeline-benchmark).
+
 ---
 
 ## NFR02 — Ingestion Latency

@@ -1,6 +1,7 @@
 package com.h.vanioak.common.config.clickhouse;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -31,6 +32,20 @@ public class ClickHouseConnection implements AutoCloseable {
 		if (response.statusCode() != 200 || !"1".equals(response.body().strip())) {
 			// Do not include the server response: it can contain sensitive configuration.
 			throw new IOException("ClickHouse connectivity check failed (HTTP " + response.statusCode() + ")");
+		}
+	}
+
+	public void execute(String statement) throws IOException, InterruptedException {
+		HttpRequest insert = HttpRequest.newBuilder(request, (name, value) -> true)
+				.uri(URI.create(request.uri() + "?async_insert=0&wait_end_of_query=1"))
+				.header("Content-Type", "text/plain; charset=UTF-8")
+				.POST(HttpRequest.BodyPublishers.ofString(statement, StandardCharsets.UTF_8))
+				.build();
+		HttpResponse<String> response = client.send(insert, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+		if (response.statusCode() != 200 || !response.body().isBlank()
+				|| response.headers().allValues("X-ClickHouse-Exception-Code").stream()
+						.anyMatch(code -> !"0".equals(code))) {
+			throw new IOException("ClickHouse statement execution failed");
 		}
 	}
 

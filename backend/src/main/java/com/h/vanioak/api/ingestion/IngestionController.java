@@ -44,7 +44,7 @@ public class IngestionController {
 	public ResponseEntity<ApiResponse<IngestResponse>> ingest(@Valid @RequestBody LogRequest request,
 			@RequestHeader("X-API-Key") String apiKey,
 			@Parameter(hidden = true) @AuthenticationPrincipal VerificationResult context) {
-		var result = ingestion.ingest(context, List.of(command(request)));
+		var result = ingestion.ingest(context, apiKey, List.of(command(request)));
 		return ResponseEntity.status(HttpStatus.ACCEPTED)
 				.body(ApiResponse.success(new IngestResponse(true, result.requestId())));
 	}
@@ -56,7 +56,7 @@ public class IngestionController {
 	public ResponseEntity<ApiResponse<BatchIngestResponse>> ingestBatch(@Valid @RequestBody LogBatchRequest request,
 			@RequestHeader("X-API-Key") String apiKey,
 			@Parameter(hidden = true) @AuthenticationPrincipal VerificationResult context) {
-		var result = ingestion.ingest(context, request.logs().stream().map(this::command).toList());
+		var result = ingestion.ingest(context, apiKey, request.logs().stream().map(this::command).toList());
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.success(
 				new BatchIngestResponse(true, result.acceptedCount(), result.requestId())));
 	}
