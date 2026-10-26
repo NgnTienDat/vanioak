@@ -51,6 +51,8 @@ class OpenApiConfigurationTest {
 	@MockitoBean
 	private ApplicationFacade applications;
 	@MockitoBean
+	private com.h.vanioak.modules.identity.api.ApplicationAccessFacade applicationAccess;
+	@MockitoBean
 	private ApiKeyFacade keys;
 	@MockitoBean
 	private IngestionFacade ingestion;
@@ -66,6 +68,8 @@ class OpenApiConfigurationTest {
 				.andExpect(jsonPath("$.paths['/api/v1/users']").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].get.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].post").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/engineers/{userId}'].post").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/engineers/{userId}'].delete").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}'].patch").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/environments/{environmentId}/api-keys'].post.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/api-keys/{credentialId}/rotate'].post").exists())

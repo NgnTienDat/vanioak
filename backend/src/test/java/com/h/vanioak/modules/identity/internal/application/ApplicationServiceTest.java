@@ -41,11 +41,15 @@ import com.h.vanioak.modules.identity.api.IdentityException;
 class ApplicationServiceTest {
 	private final ApplicationRepository applications = mock(ApplicationRepository.class);
 	private final EnvironmentRepository environments = mock(EnvironmentRepository.class);
-	private final ApplicationService service = new ApplicationService(applications, environments);
+	private final com.h.vanioak.modules.identity.internal.access.ApplicationAccessService access = mock(com.h.vanioak.modules.identity.internal.access.ApplicationAccessService.class);
+	private final ApplicationService service = new ApplicationService(applications, environments, access);
 	private final UUID id = UUID.randomUUID();
 
 	@BeforeEach
 	void savesReturnAssignedEntities() {
+		var actor = mock(com.h.vanioak.modules.identity.internal.user.UserEntity.class);
+		lenient().when(actor.getRole()).thenReturn("ADMIN");
+		lenient().when(access.currentUser(id)).thenReturn(actor);
 		lenient().when(applications.saveAndFlush(any())).thenAnswer(call -> {
 			ApplicationEntity entity = call.getArgument(0);
 			if (entity.getId() == null) ReflectionTestUtils.setField(entity, "id", id);
@@ -91,6 +95,17 @@ class ApplicationServiceTest {
 		verifyNoInteractions(environments);
 	}
 
+    @Test
+    void engineerListingScopesAtRepositoryBeforePagination() {
+        var actor = mock(com.h.vanioak.modules.identity.internal.user.UserEntity.class);
+        when(actor.getRole()).thenReturn("ENGINEER"); when(access.currentUser(id)).thenReturn(actor);
+        when(applications.findAssignedApplications(eq(id), isNull(), isNull(), any())).thenReturn(List.of(application()));
+        when(environments.findByApplicationIdIn(List.of(id))).thenReturn(List.of());
+        assertEquals(1, service.list(id, null, null, 1).items().size());
+        verify(applications, never()).findApplications(any(), any(), any());
+        verify(applications).findAssignedApplications(eq(id), isNull(), isNull(), eq(org.springframework.data.domain.PageRequest.of(0,2)));
+    }
+
 	@Test
 	void listUsesCursorStatusAndOneEnvironmentBatch() {
 		var first = application();
@@ -99,15 +114,15 @@ class ApplicationServiceTest {
 		var environment = new EnvironmentEntity(id, EnvironmentName.DEV);
 		when(applications.findApplications(eq(Status.DISABLED), isNull(), any())).thenReturn(List.of(first, second));
 		when(environments.findByApplicationIdIn(List.of(id))).thenReturn(List.of(environment));
-		var page = service.list(Status.DISABLED, null, 1);
+		var page = service.list(id, Status.DISABLED, null, 1);
 		assertEquals(1, page.items().size());
 		assertEquals(id.toString(), new String(Base64.getUrlDecoder().decode(page.nextCursor())));
 		assertEquals(1, page.items().getFirst().environments().size());
 		when(applications.findApplications(eq(Status.DISABLED), eq(id), any())).thenReturn(List.of());
-		assertTrue(service.list(Status.DISABLED, page.nextCursor(), 1).items().isEmpty());
+		assertTrue(service.list(id, Status.DISABLED, page.nextCursor(), 1).items().isEmpty());
 		verify(environments, times(1)).findByApplicationIdIn(any());
-		error(ErrorCode.INVALID_CURSOR, () -> service.list(null, "invalid", 50));
-		for (int limit : new int[] {0, 101}) error(ErrorCode.INVALID_REQUEST, () -> service.list(null, null, limit));
+		error(ErrorCode.INVALID_CURSOR, () -> service.list(id, null, "invalid", 50));
+		for (int limit : new int[] {0, 101}) error(ErrorCode.INVALID_REQUEST, () -> service.list(id, null, null, limit));
 	}
 
 	@Test

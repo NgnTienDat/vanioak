@@ -98,6 +98,8 @@ class IdentitySecurityTest {
 	@MockitoBean
 	private ApplicationFacade applications;
 	@MockitoBean
+	private com.h.vanioak.modules.identity.api.ApplicationAccessFacade applicationAccess;
+	@MockitoBean
 	private ApiKeyFacade keys;
 	@MockitoBean
 	private RawLogPublisher publisher;
@@ -165,7 +167,7 @@ class IdentitySecurityTest {
 	void applicationOperationsAreAdminOnlyAndFutureRoutesRemainDenied() throws Exception {
 		var application = new ApplicationFacade.ApplicationView(UUID.randomUUID(), "app", null,
 				ApplicationFacade.Status.ACTIVE, List.of());
-		when(applications.list(null, null, 50)).thenReturn(new ApplicationFacade.ApplicationPage(List.of(), null));
+		when(applications.list(userId, null, null, 50)).thenReturn(new ApplicationFacade.ApplicationPage(List.of(), null));
 		when(applications.create(any())).thenReturn(application);
 		when(applications.update(any(), any())).thenReturn(application);
 		failure(mvc.perform(get("/api/v1/applications")), 401, "Invalid credentials");
@@ -179,8 +181,7 @@ class IdentitySecurityTest {
 				.contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DISABLED\"}")).andExpect(status().isOk());
 		org.mockito.Mockito.clearInvocations(applications);
 		when(user.getRole()).thenReturn("ENGINEER");
-		failure(mvc.perform(get("/api/v1/applications").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)),
-				403, "Access denied");
+		mvc.perform(get("/api/v1/applications").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)).andExpect(status().isOk());
 		failure(mvc.perform(post("/api/v1/applications").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
 				.contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"app\"}")), 403, "Access denied");
 		failure(mvc.perform(patch("/api/v1/applications/" + application.id()).header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -190,9 +191,11 @@ class IdentitySecurityTest {
 		failure(mvc.perform(get("/api/v1/applications").header(HttpHeaders.AUTHORIZATION, "Bearer " + token)),
 				403, "Access denied");
 		when(user.getStatus()).thenReturn(Status.ACTIVE);
-		failure(mvc.perform(post("/api/v1/applications/" + application.id() + "/engineers/" + userId)
-				.header(HttpHeaders.AUTHORIZATION, "Bearer " + token)), 403, "Access denied");
-		verifyNoInteractions(applications);
+		when(applicationAccess.assign(userId, application.id(), userId)).thenReturn(
+                new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.Assignment(userId, application.id()));
+        mvc.perform(post("/api/v1/applications/" + application.id() + "/engineers/" + userId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)).andExpect(status().isOk());
+        verify(applicationAccess).assign(userId, application.id(), userId);
 	}
 
 	@Test
@@ -343,4 +346,17 @@ class IdentitySecurityTest {
 				.claim("token_use", "access")
 				.signWith(Keys.hmacShaKeyFor(Base64.getDecoder().decode(accessSecret)), Jwts.SIG.HS256).compact();
 	}
+    @Test
+    void assignmentMutationsRejectEngineerAndForgedRoleOrCredentialHeaders() throws Exception {
+        String path="/api/v1/applications/"+UUID.randomUUID()+"/engineers/"+userId;
+        failure(mvc.perform(post(path).header("X-API-Key","test-only")),401,"Invalid credentials");
+        when(user.getRole()).thenReturn("ENGINEER");
+        failure(mvc.perform(post(path).header(HttpHeaders.AUTHORIZATION,"Bearer "+token).header("X-Role","ADMIN")
+            .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"ADMIN\"}")),403,"Access denied");
+        failure(mvc.perform(delete(path).header(HttpHeaders.AUTHORIZATION,"Bearer "+token)),403,"Access denied");
+        when(user.getRole()).thenReturn("ADMIN");when(user.getStatus()).thenReturn(Status.DISABLED);
+        failure(mvc.perform(post(path).header(HttpHeaders.AUTHORIZATION,"Bearer "+token)),403,"Access denied");
+        verifyNoInteractions(applicationAccess);
+    }
+
 }
