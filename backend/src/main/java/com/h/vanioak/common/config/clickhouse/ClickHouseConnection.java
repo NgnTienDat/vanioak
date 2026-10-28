@@ -1,19 +1,34 @@
 package com.h.vanioak.common.config.clickhouse;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.CharacterCodingException;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class ClickHouseConnection implements AutoCloseable {
+	private static final int MAX_READ_BYTES = 16 * 1024;
 
 	private final HttpClient client;
 	private final HttpRequest request;
+	private final Duration requestTimeout;
 
 	public ClickHouseConnection(ClickHouseProperties properties) {
+		this.requestTimeout = properties.requestTimeout();
 		this.client = HttpClient.newBuilder()
 				.connectTimeout(properties.connectTimeout())
 				.followRedirects(HttpClient.Redirect.NEVER)
@@ -49,8 +64,62 @@ public class ClickHouseConnection implements AutoCloseable {
 		}
 	}
 
+	public String queryReadOnly(String statement) throws IOException, InterruptedException {
+		if (!statement.startsWith("SELECT ") || statement.indexOf(';') >= 0)
+			throw new IllegalArgumentException("Only one SELECT statement is allowed");
+		HttpRequest query = HttpRequest.newBuilder(request, (name, value) -> true)
+				.uri(URI.create(request.uri() + "?wait_end_of_query=1"))
+				.header("Content-Type", "text/plain; charset=UTF-8")
+				.POST(HttpRequest.BodyPublishers.ofString(statement, StandardCharsets.UTF_8))
+				.build();
+		CompletableFuture<HttpResponse<byte[]>> pending = client.sendAsync(query, info -> new LimitedBody());
+		try {
+			HttpResponse<byte[]> response = pending.get(requestTimeout.toNanos(), TimeUnit.NANOSECONDS);
+			if (response.statusCode() != 200 || response.headers().allValues("X-ClickHouse-Exception-Code")
+					.stream().anyMatch(code -> !"0".equals(code)))
+				throw new IOException("ClickHouse metadata read failed");
+			return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+					.onUnmappableCharacter(CodingErrorAction.REPORT)
+					.decode(ByteBuffer.wrap(response.body())).toString();
+		} catch (ExecutionException | TimeoutException | CharacterCodingException ex) {
+			throw new IOException("ClickHouse metadata read failed");
+		} finally {
+			pending.cancel(true);
+		}
+	}
+
 	@Override
 	public void close() {
 		client.close();
+	}
+
+	private static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
+		private final CompletableFuture<byte[]> result = new CompletableFuture<>();
+		private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		private Flow.Subscription subscription;
+
+		public CompletionStage<byte[]> getBody() { return result; }
+
+		public void onSubscribe(Flow.Subscription value) {
+			subscription = value;
+			value.request(1);
+		}
+
+		public void onNext(List<ByteBuffer> buffers) {
+			for (ByteBuffer buffer : buffers) {
+				if (result.isDone() || buffer.remaining() > MAX_READ_BYTES - bytes.size()) {
+					subscription.cancel();
+					result.completeExceptionally(new IOException("ClickHouse metadata response too large"));
+					return;
+				}
+				byte[] next = new byte[buffer.remaining()];
+				buffer.get(next);
+				bytes.writeBytes(next);
+			}
+			subscription.request(1);
+		}
+
+		public void onError(Throwable error) { result.completeExceptionally(error); }
+		public void onComplete() { result.complete(bytes.toByteArray()); }
 	}
 }

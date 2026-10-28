@@ -135,6 +135,17 @@ ENGINEER queries are restricted to assigned applications.
 ADMIN sees all incidents.
 ENGINEER sees incidents for assigned applications only.
 
+Incident list filters are combined within the authorized scope before pagination.
+`from` and `to` constrain `last_seen_at` using `[from,to)`; either bound may be
+omitted. Ordering is `last_seen_at DESC, id DESC`, preserved by the opaque cursor
+and repeated filters. Concurrent updates may move an Incident's position; pages
+do not provide a snapshot across requests.
+
+List items omit `events`. Incident detail includes the newest **100** lifecycle
+events, ordered `event_at DESC, id DESC`; fewer are returned when less history
+exists. This is recent history, not a complete-history guarantee. Older events
+remain stored. No separate history endpoint or pagination field is introduced.
+
 ## 10. Alert Rules
 
 | Method | Path | Access |

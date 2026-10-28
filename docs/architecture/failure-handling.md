@@ -84,6 +84,22 @@ Alert's durable accounting uses `alert_event_receipts` in [PostgreSQL Schema](..
 
 Redis remains operational state; PostgreSQL owns durable Incident/accounting state. Redis failure still requires retry, not bypass. Telegram delivery runs from committed notification work and retries that same work independently; a timeout after Telegram accepts a send can produce a duplicate delivery under at-least-once semantics. Realtime remains best-effort and does not gate accounting. No distributed transaction or exactly-once transport guarantee is introduced.
 
+### Alert paused-source recovery
+
+Follow the Alert-specific retry, capacity and startup-fence rules in Event Contracts
+and the exact retry forwarding topology. Unconfirmed failure transfer or intrinsically
+unclassifiable/oversized work is not source-ACK-ready. Stop only Alert consumption,
+latch readiness false and retain the startup marker; no automatic hot restart or
+shared connection reset. Close only the owned source channel for broker redelivery;
+consumer cancellation alone is not proof of requeue. Cleanup deadlines do not prove
+native send/channel termination. Preserve unresolved ownership and report it.
+
+Operator recovery must reconcile committed receipts, queue/unacknowledged work and
+publication uncertainty, preserve the exact old marker/evidence, and separately
+approve release/resumption. No ACK, purge, delete, skip or manual replay as a hidden
+recovery mechanism. A retained shared-broker backlog can affect other publishers;
+capacity pause is not absolute dependency isolation.
+
 ## 7. PostgreSQL / Redis Failure
 
 Credential validation:
