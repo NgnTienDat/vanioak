@@ -89,6 +89,14 @@ LOG_RETENTION_DAYS=7
 
 Applies to all log levels and all dev/test/staging environments.
 
+Retention reads the installed `logs` table TTL metadata after one minute and then
+one hour after each completed check. Each check logs `OK` when the unconditional
+timestamp-based seven-day DELETE policy is verified, `MISMATCH` for a definite
+policy difference, or `UNKNOWN` when metadata cannot be verified. Query failures
+are retried on the next scheduled check and do not block log processing. `OK`
+verifies the installed policy only; ClickHouse removes expired rows during
+background merges, so it does not certify immediate or complete physical deletion.
+
 ## 5. Realtime
 
 Configure:
@@ -98,6 +106,17 @@ Configure:
 - allowed frontend origins.
 
 No unbounded SSE client buffer is permitted.
+
+The initial Realtime feature switch is `vanioak.realtime.enabled` (default
+`false`); `vanioak.realtime.allowed-origins` defaults to an empty list. Only
+configured origins may use the exact SSE endpoint through CORS; no wildcard or
+credentialed cookie flow is enabled. This phase admits at most 32 connections,
+four per user, 64 queued frames and 1 MiB of serialized frames per connection.
+The initial heartbeat interval is 15 seconds, writer drain quantum is 16 frames
+per 50 ms, stream lifetime is five minutes, and shutdown wait is five seconds.
+The feature switch alone does not establish readiness: the exclusive consumer
+must be registered before streams are admitted. RabbitMQ consumption and its
+failure contract are deferred to the separately reviewed Realtime consumer gate.
 
 ## 6. Alerting
 
@@ -112,6 +131,33 @@ TELEGRAM_ENABLED=true|false
 ```
 
 MVP uses one configured Telegram destination for the deployment, not per-user/application routing. When `TELEGRAM_ENABLED=true`, bot token and chat ID are required; invalid/missing configuration fails startup. Disabled delivery leaves Incident processing enabled. Alert retry uses `ALERT_RETRY_MAX_ATTEMPTS=3` (retries after the initial attempt) and configurable delays, following [Topology](../architecture/rabbitmq-topology.md#5-retry-and-dlq).
+
+### Alert consumer runtime
+
+Consumer disabled by default. Canonical vanioak.alert properties and environment
+aliases (module-local mapping, no default credentials):
+
+| Property | Environment alias | Default |
+|---|---|---|
+| consumer-enabled | ALERT_CONSUMER_ENABLED | false |
+| retry-max-attempts | ALERT_RETRY_MAX_ATTEMPTS | 3 |
+| retry-delays | ALERT_RETRY_DELAYS | 5s,30s,120s |
+| publish-confirm-timeout | ALERT_PUBLISH_CONFIRM_TIMEOUT | 5s |
+| fence-path | ALERT_FENCE_PATH | none; required when enabled |
+
+Retry bound is nonnegative and matches the positive delay-list length; zero uses
+an empty list. Confirm timeout must be positive, representable and at most5s to
+fit the listener's6s handoff wait. Disabled mode creates no consumer/publisher or
+fence. Enabled startup validates configuration/native confirm capability, passive
+resource existence and an operator-reviewed stable absolute Alert fence filename
+in an existing persistent directory; it must not share Realtime's fence. No storage
+provisioning or alternate-path fallback is automatic. Arm CREATE_NEW/force before
+listener startup; retain marker after clean/failure shutdown. Existing/unusable
+marker prevents restart until separately reviewed operator recovery. Readiness
+requires exact native ConsumeOk registration, not application-start success.
+
+Operator topology/size/fixture preflight and separate native execution approval
+remain mandatory. Do not enable this flag merely because offline tests passed.
 
 ## 7. Security
 

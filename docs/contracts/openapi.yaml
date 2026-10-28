@@ -878,7 +878,12 @@ paths:
       tags:
       - Incidents
       summary: List incidents
-      description: ADMIN sees all incidents; ENGINEER sees incidents for assigned applications only.
+      description: >-
+        ADMIN sees all incidents; ENGINEER sees incidents for assigned applications only.
+        Filters apply within the authorized scope before cursor pagination.
+        from/to constrain last_seen_at using [from,to), with either bound optional.
+        Order is last_seen_at DESC, id DESC; continuation repeats the original filters.
+        Items omit events. Concurrent updates may move items; pages are not a snapshot.
       parameters:
       - name: application_id
         in: query
@@ -938,7 +943,10 @@ paths:
       tags:
       - Incidents
       summary: Get incident detail
-      description: ADMIN can view all incidents; ENGINEER can view incidents for assigned applications only.
+      description: >-
+        ADMIN can view all incidents; ENGINEER can view incidents for assigned applications only.
+        Includes the newest 100 lifecycle events in event_at DESC, id DESC order.
+        Older history remains stored; this response does not promise complete history.
       parameters:
       - $ref: '#/components/parameters/IncidentId'
       responses:
@@ -1642,6 +1650,8 @@ components:
           format: date-time
         events:
           type: array
+          maxItems: 100
+          description: Recent lifecycle history on detail only; newest first by event_at DESC, id DESC. Omitted from list items.
           items:
             $ref: '#/components/schemas/IncidentEvent'
     IncidentEvent:

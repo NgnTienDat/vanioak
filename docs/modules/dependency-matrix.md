@@ -5,10 +5,10 @@
 | Identity | R/W | - | R/W | - | self | - |
 | Ingestion | - | - | local/indirect | Publish | Call | - |
 | Processing | - | Write | - | Consume/Publish | - | - |
-| Alert | R/W | - | R/W | Consume | - | Send |
+| Alert | R/W | - | R/W | Consume | Read-only environment-parent metadata | Send |
 | Realtime | - | - | - | Consume | Authorization | - |
 | Analysis | - | Read | optional | - | - | - |
-| Retention | - | Write/Delete | - | - | - | - |
+| Retention | - | Read TTL metadata; native TTL deletes | - | - | - | - |
 
 ## Identity storage responsibilities
 
@@ -17,6 +17,11 @@
 - Identity's API-key cache is a separate Redis use case with its existing safe PostgreSQL fallback. Alert cache/frequency/dedup/cooldown state is unchanged. Those cache/recovery policies do not apply to the auth blacklist.
 
 ## Dependency rules
+- Alert may resolve an environment's parent application through Identity's public
+  EnvironmentScopeFacade for committed Incident realtime events. This trusted
+  in-process metadata lookup does not grant human access; Realtime retains all
+  subscription and per-send authorization. Alert must not access Identity tables
+  or internal repositories directly.
 - Ingestion must not depend on ClickHouse availability.
 - Processing must not depend on Backend API availability.
 - Alert must not depend on Realtime availability for Incident persistence.

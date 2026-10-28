@@ -105,6 +105,30 @@ Publish persistent, mandatory retry copies through the existing default exchange
 
 Whole invalid batches go directly to `dead-letter.exchange` / `dead-letter.log`; the durable queue is `dead-letter.queue`. Retry/DLQ publication needs an ACK without a mandatory return before the source delivery becomes ACK-ready. If transfer is unconfirmed, keep the source unacknowledged for the first configured retry delay (5s when retries are disabled), then requeue individually. A separate timer prevents synchronous publication from starving this cooldown. Uncertain transfers can duplicate both copies; there is no exactly-once or global physical-attempt bound.
 
+### Alert retry implementation
+
+Declare/provision separately exactly one durable, non-exclusive, non-auto-delete
+queue alert.retry.queue with arguments:
+
+```json
+{"x-queue-type":"quorum","x-dead-letter-strategy":"at-least-once","x-overflow":"reject-publish","x-dead-letter-exchange":"critical.exchange","x-dead-letter-routing-key":"critical.log"}
+```
+
+No new exchange or explicit retry binding is required: publish mandatory to the
+existing default exchange with routing key alert.retry.queue. Existing durable
+critical.exchange / critical.log -> alert.queue routing must already be verified.
+Per-message expiration implements minimum delays5s/30s/120s; head-of-line expiry
+in a single retry queue may increase waits. Require compatible RabbitMQ4.2 quorum
+dead-lettering prerequisites, stream_queue flag and effective policies/arguments.
+Never delete/migrate an incompatible queue automatically. Positive retry publication
+confirmation alone does not prove safe later dead-letter forwarding.
+
+Alert startup does not auto-declare topology. Operator preflight must verify full
+queue arguments, target bindings, permissions, feature flags and actual message-size
+ceiling; runtime passive existence checks do not prove these properties. Failure
+retains source ownership and latches own consumption stopped per Alert event rules.
+Queue provisioning and native activation require separate explicit approval.
+
 ## 6. Critical Flow
 
 ERROR/CRITICAL events use a separate exchange/queue:
