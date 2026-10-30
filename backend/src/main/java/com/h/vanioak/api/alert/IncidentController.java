@@ -4,11 +4,16 @@ import java.time.Instant;
 import java.util.UUID;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.h.vanioak.api.alert.dto.IncidentResponse;
+import com.h.vanioak.api.alert.dto.IncidentStatusRequest;
+import com.h.vanioak.api.alert.dto.IncidentStatusResponse;
 import com.h.vanioak.api.dto.ApiResponse;
 import com.h.vanioak.modules.alert.api.AlertRuleFacade.Level;
 import com.h.vanioak.modules.alert.api.IncidentReadFacade.Filters;
@@ -20,6 +25,12 @@ import lombok.RequiredArgsConstructor;
 @SecurityRequirement(name = "bearerAuth") @RequiredArgsConstructor
 public class IncidentController {
 	private final IncidentApiService api;
+
+	@PatchMapping("/{incidentId}/status")
+	public ApiResponse<IncidentStatusResponse> resolve(Authentication caller, @PathVariable UUID incidentId,
+			@Valid @RequestBody IncidentStatusRequest request) {
+		return ApiResponse.success(api.resolve(caller, incidentId));
+	}
 
 	@GetMapping
 	public ApiResponse<IncidentResponse.Page> list(Authentication caller,

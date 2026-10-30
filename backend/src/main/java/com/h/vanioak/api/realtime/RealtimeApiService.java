@@ -15,20 +15,15 @@ import com.h.vanioak.modules.realtime.api.ErrorCode;
 import com.h.vanioak.modules.realtime.api.RealtimeException;
 import com.h.vanioak.modules.realtime.api.RealtimeFacade;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
+@RequiredArgsConstructor 
 public class RealtimeApiService {
 	private final RealtimeFacade realtime;
 	private final AuthFacade auth;
 	private final ApplicationAccessFacade access;
 	private final ApplicationFacade applications;
-
-	public RealtimeApiService(RealtimeFacade realtime, AuthFacade auth, ApplicationAccessFacade access,
-			ApplicationFacade applications) {
-		this.realtime = realtime;
-		this.auth = auth;
-		this.access = access;
-		this.applications = applications;
-	}
 
 	public RealtimeFacade.Subscription open(Authentication caller, String header, UUID applicationId,
 			UUID environmentId, String level, RealtimeFacade.Sink sink) {

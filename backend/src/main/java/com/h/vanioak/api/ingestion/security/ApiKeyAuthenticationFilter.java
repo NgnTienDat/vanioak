@@ -70,6 +70,8 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter implements 
 	}
 
 	private void write(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+		if (status != HttpStatus.INTERNAL_SERVER_ERROR)
+			log.warn("Ingestion request rejected: status={}, reason={}", status.value(), message);
 		response.setStatus(status.value());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
 		mapper.writeValue(response.getOutputStream(), ApiResponse.error(message));

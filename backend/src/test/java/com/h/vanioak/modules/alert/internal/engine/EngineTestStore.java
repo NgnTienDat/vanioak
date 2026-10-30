@@ -69,6 +69,18 @@ class EngineTestStore extends AbstractPlatformTransactionManager {
 				.filter(i -> i.getEnvironmentId().equals(c.getArgument(0)) && i.getFingerprint().equals(c.getArgument(1)) && i.getStatus() == c.getArgument(2))
 				.findFirst().map(i -> incident(i.getId())));
 		when(incidents.findById(any())).thenAnswer(c -> Optional.ofNullable(incident(c.getArgument(0))));
+		when(incidents.readDetail(any(), anySet())).thenAnswer(c -> Optional.ofNullable(incident(c.getArgument(0)))
+				.filter(i -> c.<java.util.Set<UUID>>getArgument(1).contains(i.getEnvironmentId())));
+		when(incidents.resolutionScope(any(), anySet())).thenAnswer(c -> Optional.ofNullable(committedIncidents.get(c.getArgument(0)))
+				.filter(i -> c.<java.util.Set<UUID>>getArgument(1).contains(i.getEnvironmentId()))
+				.map(i -> new IncidentRepository.ResolutionScope() {
+					public UUID getEnvironmentId() { return i.getEnvironmentId(); }
+					public String getFingerprint() { return i.getFingerprint(); }
+				}));
+		when(incidents.latestManualResolution(any(), any(), any())).thenAnswer(c -> visibleIncidents().stream()
+				.filter(i -> i.getEnvironmentId().equals(c.getArgument(0)) && i.getFingerprint().equals(c.getArgument(1))
+						&& i.getResolutionSource() == c.getArgument(2))
+				.map(IncidentEntity::getResolvedAt).max(Instant::compareTo).orElse(null));
 		when(incidents.saveAndFlush(any())).thenAnswer(c -> {
 			IncidentEntity i = c.getArgument(0); ReflectionTestUtils.setField(i, "id", UUID.randomUUID()); active.get().incidents.put(i.getId(), i); return i;
 		});

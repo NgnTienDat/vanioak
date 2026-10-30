@@ -10,8 +10,22 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import com.h.vanioak.modules.alert.api.AlertRuleFacade.Level;
+import com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source;
 
 public interface IncidentRepository extends JpaRepository<IncidentEntity, UUID> {
+	interface ResolutionScope {
+		UUID getEnvironmentId();
+		String getFingerprint();
+	}
+
+	@Query("select i.environmentId as environmentId, i.fingerprint as fingerprint from IncidentEntity i "
+			+ "where i.id=:id and i.environmentId in :environments")
+	Optional<ResolutionScope> resolutionScope(@Param("id") UUID id, @Param("environments") Set<UUID> environments);
+
+	@Query("select max(i.resolvedAt) from IncidentEntity i where i.environmentId=:env "
+			+ "and i.fingerprint=:fingerprint and i.resolutionSource=:source")
+	Instant latestManualResolution(@Param("env") UUID env, @Param("fingerprint") String fingerprint, @Param("source") Source source);
+
 	@Query("select i from IncidentEntity i where i.environmentId in :environments "
 			+ "and (:status is null or i.status=:status) and (:level is null or i.level=:level) "
 			+ "and (cast(:lowerBound as Instant) is null or i.lastSeenAt>=:lowerBound) and (cast(:upperBound as Instant) is null or i.lastSeenAt<:upperBound) "

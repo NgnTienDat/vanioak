@@ -469,6 +469,47 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /applications/{applicationId}/engineers:
+    get:
+      tags:
+      - Applications
+      summary: List engineers assigned to an application
+      description: >-
+        ADMIN only. Reads current application assignments, including ACTIVE and DISABLED
+        ENGINEER users. Disabled applications remain readable. Items contain only id,
+        username and status, ordered by user id ASC. Use the opaque next_cursor unchanged
+        with the same application scope. Pages reflect current assignments, not a snapshot
+        across requests. An existing empty roster returns items=[] and next_cursor=null;
+        a nonexistent application returns 404. Assignment remains application-scoped
+        across all of its environments. This GET does not change assignments or roles.
+      parameters:
+      - $ref: '#/components/parameters/ApplicationId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Assigned engineers
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/AssignedEngineerListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /applications/{applicationId}/engineers/{userId}:
     post:
       tags:
@@ -971,6 +1012,47 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /incidents/{incidentId}/status:
+    patch:
+      tags: [Incidents]
+      summary: Manually resolve an incident
+      description: >-
+        Active ADMIN or assigned active ENGINEER; disabled application/environment is allowed.
+        Only OPEN to RESOLVED is supported. Duplicate resolution returns existing audit without
+        another history event or SSE. Legacy source/actor stay null. Missing or foreign ID is
+        404 for ADMIN and 403 for ENGINEER. Actor comes from the authenticated principal.
+      parameters:
+      - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentStatusRequest'
+      responses:
+        '200':
+          description: Committed resolution, including an unchanged previous resolution
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/ApiResponse'
+                - type: object
+                  properties:
+                    success:
+                      const: true
+                    data:
+                      $ref: '#/components/schemas/IncidentStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /alert-rules:
     get:
       tags:
@@ -1413,6 +1495,38 @@ components:
           type:
           - string
           - 'null'
+    AssignedEngineerResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - username
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - DISABLED
+    AssignedEngineerListResponse:
+      type: object
+      required:
+      - items
+      - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssignedEngineerResponse'
+        next_cursor:
+          type:
+          - string
+          - 'null'
     CreateApplicationRequest:
       type: object
       required:
@@ -1602,6 +1716,33 @@ components:
           type:
           - string
           - 'null'
+    IncidentStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [RESOLVED]
+    IncidentStatusResponse:
+      type: object
+      required: [id, status, resolved_at, resolution_source, resolved_by_user_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [RESOLVED]
+        resolved_at:
+          type: [string, 'null']
+          format: date-time
+        resolution_source:
+          type: [string, 'null']
+          enum: [MANUAL, AUTOMATIC, null]
+        resolved_by_user_id:
+          type: [string, 'null']
+          format: uuid
     IncidentResponse:
       type: object
       required:

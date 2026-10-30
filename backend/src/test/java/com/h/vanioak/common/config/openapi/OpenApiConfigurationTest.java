@@ -71,6 +71,7 @@ class OpenApiConfigurationTest {
 				.andExpect(jsonPath("$.paths['/api/v1/users']").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].get.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/applications'].post").exists())
+				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/engineers'].get.security[0].bearerAuth").isArray())
 				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/engineers/{userId}'].post").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}/engineers/{userId}'].delete").exists())
 				.andExpect(jsonPath("$.paths['/api/v1/applications/{applicationId}'].patch").exists())
@@ -93,5 +94,16 @@ class OpenApiConfigurationTest {
 				.andExpect(status().is3xxRedirection());
 		mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
 		verifyNoInteractions(auth);
+	}
+
+	@Test
+	void rosterRuntimeSchemaContainsOnlyMinimumEngineerIdentity() throws Exception {
+		mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
+				.andExpect(jsonPath("$.components.schemas.AssignedEngineerListResponse.properties.next_cursor").exists())
+				.andExpect(jsonPath("$.components.schemas.AssignedEngineerResponse.properties.*", org.hamcrest.Matchers.hasSize(3)))
+				.andExpect(jsonPath("$.components.schemas.AssignedEngineerResponse.properties.id").exists())
+				.andExpect(jsonPath("$.components.schemas.AssignedEngineerResponse.properties.username").exists())
+				.andExpect(jsonPath("$.components.schemas.AssignedEngineerResponse.properties.status").exists());
+		verifyNoInteractions(applicationAccess);
 	}
 }

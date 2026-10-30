@@ -64,7 +64,7 @@ class AlertIncidentSseHarnessTest {
 		}
 	}
 	@Test void plannedStopDoesNotAcceptOtherTransportOrParserErrors() throws Exception {
-		for(Exception error:new Exception[]{new IOException("connection reset"),new java.net.SocketException("closed"),new IOException("closed",new IllegalStateException("cause")),new IOException("closed",new IOException("connection reset")),new IOException("closed",new java.net.SocketException("closed")),new IllegalArgumentException("malformed")}) {
+		for(Exception error:new Exception[]{new IOException("connection reset"),new java.net.SocketException("closed"),new IOException("closed",new IllegalStateException("cause")),new IOException("closed",new IOException("connection reset")),new IOException("closed",new java.net.SocketException("closed")),new IOException("closed",new java.io.EOFException("EOF reached while reading")),new IOException("closed",new IOException("connection reset",new java.io.EOFException("EOF reached while reading"))),new IOException("closed",new IOException("chunked transfer encoding, state: READING_DATA",new java.io.EOFException("EOF reached while reading"))),new IOException("closed",new IOException("chunked transfer encoding, state: READING_LENGTH",new java.io.EOFException("unexpected EOF"))),new IllegalArgumentException("malformed")}) {
 			var input=new TerminalInput(wire(),error);try(var p=probe(input)){p.beginPlannedStop();finished(p,input);assertThrows(AssertionError.class,() -> p.capturedFrames(true));}
 		}
 	}
@@ -98,6 +98,23 @@ class AlertIncidentSseHarnessTest {
    p.start();subscriber.onNext(List.of(java.nio.ByteBuffer.wrap(wire().getBytes(StandardCharsets.UTF_8))));assertTrue(parsed.await(5,TimeUnit.SECONDS));assertEquals(goodFrames(),p.capturedFrames(false));p.beginPlannedStop();
    subscriber.onError(new IOException("closed"));p.reader.join(1000);assertFalse(p.reader.isAlive());assertNotNull(p.failure.get());assertNotNull(p.failure.get().getCause(),"JDK wraps the upstream closure");assertThrows(AssertionError.class,()->p.capturedFrames(false));assertEquals(goodFrames(),p.capturedFrames(true));assertTrue(java.nio.file.Files.exists(p.path.resolveSibling("jdk-close.journal.terminal.json")));
   }
+ }
+ @Test void jdkChunkBoundaryEofRequiresVerifiedPlannedStopAndKeepsJournal() throws Exception {
+  var subscriber=java.net.http.HttpResponse.BodySubscribers.ofInputStream();subscriber.onSubscribe(new java.util.concurrent.Flow.Subscription(){public void request(long n){}public void cancel(){}});
+  var body=subscriber.getBody().toCompletableFuture().get(1,TimeUnit.SECONDS);var parsed=new CountDownLatch(2);
+  try(var p=new AlertIncidentSseNativeIT.Probe(body,directory.resolve("jdk-chunk-eof.journal"),mapper,(block,json)->{var frame=AlertIncidentSseNativeIT.parse(block,json);if(frame!=null)parsed.countDown();return frame;})) {
+   p.start();subscriber.onNext(List.of(java.nio.ByteBuffer.wrap(wire().getBytes(StandardCharsets.UTF_8))));assertTrue(parsed.await(5,TimeUnit.SECONDS));var before=p.capturedFrames(false);p.beginPlannedStop();
+   var upstream=new IOException("chunked transfer encoding, state: READING_LENGTH",new java.io.EOFException("EOF reached while reading"));subscriber.onError(upstream);p.reader.join(1000);assertFalse(p.reader.isAlive());assertSame(upstream,p.failure.get().getCause());
+   assertThrows(AssertionError.class,()->p.capturedFrames(false));var after=p.capturedFrames(true);assertEquals(before,after);assertThrows(UnsupportedOperationException.class,after::clear);
+  }
+ }
+ @Test void chunkBoundaryEofBeforeStopStillFails() throws Exception {
+  var error=new IOException("closed",new IOException("chunked transfer encoding, state: READING_LENGTH",new java.io.EOFException("EOF reached while reading")));
+  var input=new TerminalInput(wire(),error);try(var p=probe(input)){finished(p,input);assertThrows(AssertionError.class,p::beginPlannedStop);assertThrows(AssertionError.class,()->p.capturedFrames(true));assertSame(error,p.failure.get());}
+ }
+ @Test void chunkBoundaryEofCannotHidePartialTerminalData() throws Exception {
+  var error=new IOException("closed",new IOException("chunked transfer encoding, state: READING_LENGTH",new java.io.EOFException("EOF reached while reading")));
+  var input=new TerminalInput(wire(),error,"event: incident.updated\ndata: ");try(var p=probe(input)){p.beginPlannedStop();finished(p,input);assertThrows(AssertionError.class,()->p.capturedFrames(true));}
  }
  @Test void livePhaseChecksCompleteJournalBeforeShutdown() throws Exception {
   var input=new TerminalInput(wire(),new IOException("closed"));try(var p=probe(input)){assertEquals(goodFrames(),p.capturedFrames(false));java.nio.file.Files.writeString(p.path,wire().substring(0,wire().length()-1),StandardCharsets.UTF_8);assertThrows(AssertionError.class,()->p.capturedFrames(false));assertThrows(AssertionError.class,p::beginPlannedStop);}

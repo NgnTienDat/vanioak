@@ -78,13 +78,17 @@ public class AlertEngineService implements AlertEngineFacade {
 		// shortcut: full-window reconstruction is O(n); optimize only with recovery-equivalent evidence.
 		var window = receipts.window(event.environmentId(), fingerprint, rule.getId(), end.minusSeconds(rule.getWindowSeconds()), end);
 		frequency.reconcile(event.environmentId(), fingerprint, rule.getId(), rule.getWindowSeconds(), window);
+		Instant cutoff = incidents.latestManualResolution(event.environmentId(), fingerprint,
+				com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source.MANUAL);
+		if (cutoff != null && !received.isAfter(cutoff)) return new Result(Decision.ACCOUNTED, null, 0);
 		var open = incidents.findByEnvironmentIdAndFingerprintAndStatus(event.environmentId(), fingerprint, IncidentEntity.Status.OPEN);
 		if (open.isPresent()) {
 			var incident = open.get(); incident.record(received, now); receipt.associate(incident.getId());
 			realtime.register(incident, history.save(new IncidentHistory(incident, IncidentHistory.Type.COUNT_UPDATED, now)));
 			return new Result(Decision.UPDATED, incident.getId(), incident.getErrorCount());
 		}
-		var eligible = window.stream().filter(r -> r.getIncidentId() == null).toList();
+		var eligible = window.stream().filter(r -> r.getIncidentId() == null)
+				.filter(r -> cutoff == null || r.getReceivedAt().isAfter(cutoff)).toList();
 		if (eligible.size() < rule.getThreshold()) return new Result(Decision.ACCOUNTED, null, 0);
 		Instant first = eligible.stream().map(AlertEventReceipt::getReceivedAt).min(Instant::compareTo).orElseThrow();
 		var incident = incidents.saveAndFlush(new IncidentEntity(rule.getId(), event.environmentId(), event.level(), fingerprint,

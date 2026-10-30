@@ -1,0 +1,3 @@
+interface:
+  display_name: "Frontend Private Architecture"
+  short_description: "Reuse feature-based React admin architecture"

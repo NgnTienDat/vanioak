@@ -99,3 +99,7 @@ Before sending an event, Realtime must enforce application authorization. Client
 - Apply reasonable ingestion payload/batch-size limits.
 - Do not expose stack traces or secrets in API responses.
 - Use the common API error envelope.
+
+## Manual Incident resolution permission
+
+PATCH /api/v1/incidents/{incidentId}/status requires Bearer-authenticated active ADMIN or active ENGINEER assigned to the target application. Resolving an existing Incident is allowed in disabled application/environment scopes using Identity's existing current read-scope predicate. Recheck authorization after the Alert scope lock, including duplicate requests; never accept actor/scope from the body or trust client role headers. Invalid/revoked Bearer is 401; disabled/unassigned actor is 403. Missing/foreign Incident is 404 for ADMIN and 403 for ENGINEER. Revocations committed after the authorization check are not promised serializable ordering.

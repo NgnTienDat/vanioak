@@ -19,7 +19,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.sql.DriverManager;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -53,7 +52,6 @@ import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.annotation.DirtiesContext;
@@ -152,7 +150,6 @@ class BackendMvpSmokeIT {
 	@Autowired AlertConsumerLifecycle alert;
 	@Autowired RealtimeLogConsumer realtimeConsumer;
 	@Autowired Environment configuration;
-	@Autowired ConfigurableApplicationContext context;
 	@MockitoSpyBean RabbitTemplate rabbit;
 	@MockitoSpyBean RealtimeService realtime;
 	final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
@@ -552,23 +549,13 @@ class BackendMvpSmokeIT {
 			assertEquals(0, broker("consumers/processing-test").size());
 			assertArrayEquals("ALERT_ARMED_REVIEW_REQUIRED\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(ALERT_FENCE));
 			assertArrayEquals("REALTIME_ARMED_REVIEW_REQUIRED\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(RT_FENCE));
-			context.close();
-			await("owned AMQP retirement", 5, () -> broker("connections").isEmpty() && broker("channels").isEmpty());
-			try (var pg = DriverManager.getConnection(env("PROCESSING_POSTGRES_TEST_URL"), env("PROCESSING_POSTGRES_TEST_USERNAME"), env("PROCESSING_POSTGRES_TEST_PASSWORD"))) {
-				pg.setReadOnly(true);
-				try (var statement = pg.createStatement()) {
-					statement.setQueryTimeout(2);
-					try (var result = statement.executeQuery("select count(*) from pg_stat_activity where datname=current_database() and pid<>pg_backend_pid() and backend_type='client backend'")) {
-						assertTrue(result.next()); assertEquals(0, result.getLong(1));
-					}
-				}
-			}
 			state.put("cleanup_complete", cleanupFailure == null); state.put("normal_stream_stop_verified", normalStopVerified);
-			state.put("external_postflight_required", "Exact process/socket/fixture/history/new-marker identity reconciliation by approved launcher");
+			state.put("context_shutdown_owner", "Spring AFTER_CLASS; pending test-framework teardown");
+			state.put("resource_retirement_verified", false);
+			state.put("external_postflight_required", "After Spring teardown: zero PG/AMQP connections, owned process/socket retirement, fixture/history/new-marker identity reconciliation");
 			save("scenario-state.json", state);
 			if (cleanupFailure != null) throw new AssertionError("Owned key/session cleanup failed", cleanupFailure);
 		} finally {
-			if (context.isActive()) context.close();
 			http.shutdownNow();
 		}
 	}
@@ -631,6 +618,31 @@ class BackendMvpSmokeIT {
 
 	public static class OfflineChecks {
 		@TempDir Path directory;
+		@Test void springOwnsContextUntilAfterClass() throws Exception {
+			assertEquals(DirtiesContext.ClassMode.AFTER_CLASS, BackendMvpSmokeIT.class.getAnnotation(DirtiesContext.class).classMode());
+			var manager = new org.springframework.test.context.TestContextManager(ContextLifecycleFixture.class);
+			var fixture = new ContextLifecycleFixture();
+			var method = ContextLifecycleFixture.class.getDeclaredMethod("scenario");
+			manager.beforeTestClass(); manager.prepareTestInstance(fixture);
+			var managed = (org.springframework.context.ConfigurableApplicationContext) manager.getTestContext().getApplicationContext();
+			var closures = new java.util.concurrent.atomic.AtomicInteger();
+			managed.addApplicationListener(event -> { if (event instanceof org.springframework.context.event.ContextClosedEvent) closures.incrementAndGet(); });
+			try {
+				assertEquals(0, managed.getBeanNamesForType(javax.sql.DataSource.class).length);
+				manager.beforeTestMethod(fixture, method);
+				manager.afterTestMethod(fixture, method, null);
+				assertTrue(managed.isActive());
+				assertSame(managed, manager.getTestContext().getApplicationContext());
+			} finally { manager.afterTestClass(); }
+			assertFalse(managed.isActive()); assertEquals(1, closures.get());
+		}
+		@org.springframework.test.context.NestedTestConfiguration(org.springframework.test.context.NestedTestConfiguration.EnclosingConfiguration.OVERRIDE)
+		@org.springframework.test.context.BootstrapWith(org.springframework.test.context.support.DefaultTestContextBootstrapper.class)
+		@org.springframework.test.context.ContextConfiguration(classes = EmptyContextConfiguration.class)
+		@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+		static class ContextLifecycleFixture { void scenario() { } }
+		@org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+		static class EmptyContextConfiguration { }
 		@Test void nativeGateRejectsUnapprovedScopeBeforeAnyAccess() {
 			assertThrows(IllegalStateException.class, () -> requireApprovedScope(Map.of()));
 		}

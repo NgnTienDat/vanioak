@@ -74,6 +74,7 @@ public class IdentitySecurityConfig {
 						.requestMatchers(jwt::shouldNotFilter).permitAll()
 						.requestMatchers("/api/v1/users", "/api/v1/users/**").hasRole("ADMIN")
 						.requestMatchers(HttpMethod.GET, "/api/v1/applications").hasAnyRole("ADMIN", "ENGINEER")
+						.requestMatchers(HttpMethod.GET, "/api/v1/applications/{applicationId}/engineers").hasRole("ADMIN")
 						.requestMatchers(HttpMethod.POST, "/api/v1/applications/{applicationId}/engineers/{userId}").hasRole("ADMIN")
 						.requestMatchers(HttpMethod.DELETE, "/api/v1/applications/{applicationId}/engineers/{userId}").hasRole("ADMIN")
 						.requestMatchers(HttpMethod.POST, "/api/v1/applications").hasRole("ADMIN")

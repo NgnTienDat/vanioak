@@ -15,6 +15,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.ArgumentMatchers.any;
 import java.util.UUID;
 import java.util.Optional;
+import java.util.List;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import com.h.vanioak.modules.identity.api.ApplicationAccessFacade;
@@ -96,5 +100,85 @@ class ApplicationAccessServiceTest {
 	}
 	@Test void dependencyFailureDoesNotGrantAccess() {
 		when(access.existsByUserIdAndApplicationId(engineer,app)).thenThrow(new IllegalStateException());assertThrows(IllegalStateException.class,()->service.requireApplicationReadAccess(engineer,app));verifyNoInteractions(apps);
+	}
+
+	private UserApplicationAccessRepository.AssignedEngineerRow row(UUID id, String username, UserFacade.Status status) {
+		var row = mock(UserApplicationAccessRepository.AssignedEngineerRow.class);
+		when(row.getId()).thenReturn(id); when(row.getUsername()).thenReturn(username); when(row.getStatus()).thenReturn(status);
+		return row;
+	}
+
+	@Test void rosterIncludesAssignedActiveAndDisabledEngineersOnDisabledApplication() {
+		when(application.getStatus()).thenReturn(ApplicationFacade.Status.DISABLED);
+		var active = row(engineer, "active", UserFacade.Status.ACTIVE);
+		var disabled = row(env, "disabled", UserFacade.Status.DISABLED);
+		when(access.findAssignedEngineers(app, null, PageRequest.of(0, 51)))
+				.thenReturn(List.of(active, disabled));
+		var page = service.listEngineers(admin, app, null, 50);
+		assertEquals(List.of(new ApplicationAccessFacade.AssignedEngineer(engineer, "active", UserFacade.Status.ACTIVE),
+				new ApplicationAccessFacade.AssignedEngineer(env, "disabled", UserFacade.Status.DISABLED)), page.items());
+		assertNull(page.nextCursor());
+		verify(access, never()).assign(any(), any()); verify(access, never()).revoke(any(), any());
+		verifyNoInteractions(environments);
+	}
+
+	@Test void emptyRosterIsDistinctFromNonexistentApplication() {
+		when(access.findAssignedEngineers(app, null, PageRequest.of(0, 51))).thenReturn(List.of());
+		assertTrue(service.listEngineers(admin, app, null, 50).items().isEmpty());
+		assertNull(service.listEngineers(admin, app, null, 50).nextCursor());
+		UUID missing = UUID.randomUUID();
+		error(ErrorCode.APPLICATION_NOT_FOUND, () -> service.listEngineers(admin, missing, null, 50));
+		verify(access, never()).findAssignedEngineers(org.mockito.ArgumentMatchers.eq(missing), any(), any());
+	}
+
+	@Test void rosterRequiresCurrentActiveAdminBeforeInspectingApplicationOrAssignments() {
+		error(ErrorCode.ACCESS_DENIED, () -> service.listEngineers(engineer, app, null, 50));
+		when(actor.getStatus()).thenReturn(UserFacade.Status.DISABLED);
+		error(ErrorCode.ACCESS_DENIED, () -> service.listEngineers(admin, app, null, 50));
+		when(users.findById(admin)).thenReturn(Optional.empty());
+		error(ErrorCode.INVALID_CREDENTIALS, () -> service.listEngineers(admin, app, null, 50));
+		verifyNoInteractions(apps, access, environments);
+	}
+
+	@Test void rosterCursorUsesLastReturnedIdAndReadsOnlyLimitPlusOne() {
+		UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+		UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+		UUID third = UUID.fromString("80000000-0000-0000-0000-000000000003");
+		var one = row(first, "one", UserFacade.Status.ACTIVE);
+		var two = row(second, "two", UserFacade.Status.DISABLED);
+		var three = row(third, "three", UserFacade.Status.ACTIVE);
+		when(access.findAssignedEngineers(app, null, PageRequest.of(0, 3))).thenReturn(List.of(one, two, three));
+		when(access.findAssignedEngineers(app, second, PageRequest.of(0, 3))).thenReturn(List.of(three));
+		var head = service.listEngineers(admin, app, null, 2);
+		assertEquals(List.of(first, second), head.items().stream().map(ApplicationAccessFacade.AssignedEngineer::id).toList());
+		assertEquals(second.toString(), new String(Base64.getUrlDecoder().decode(head.nextCursor()), StandardCharsets.UTF_8));
+		var tail = service.listEngineers(admin, app, head.nextCursor(), 2);
+		assertEquals(List.of(third), tail.items().stream().map(ApplicationAccessFacade.AssignedEngineer::id).toList());
+		assertNull(tail.nextCursor());
+		verify(access).findAssignedEngineers(app, second, PageRequest.of(0, 3));
+	}
+
+	@Test void rosterRejectsInvalidLimitsAndCursorsBeforeRepositoryRead() {
+		for (int limit : new int[] {0, -1, 101}) error(ErrorCode.INVALID_REQUEST, () -> service.listEngineers(admin, app, null, limit));
+		for (String cursor : List.of("", "!", "a".repeat(65),
+				Base64.getUrlEncoder().encodeToString("1-1-1-1-1".getBytes(StandardCharsets.UTF_8)),
+				Base64.getUrlEncoder().encodeToString("ABCDEFAB-0000-0000-0000-000000000000".getBytes(StandardCharsets.UTF_8))))
+			error(ErrorCode.INVALID_CURSOR, () -> service.listEngineers(admin, app, cursor, 50));
+		verifyNoInteractions(access);
+	}
+
+	@Test void rosterScopeIsApplicationBoundEvenWhenCursorCameFromAnotherApplication() {
+		UUID other = UUID.randomUUID();
+		when(apps.existsById(other)).thenReturn(true);
+		var first = row(engineer, "first-app", UserFacade.Status.ACTIVE);
+		var more = row(env, "more", UserFacade.Status.DISABLED);
+		var otherEngineer = row(env, "other-app", UserFacade.Status.DISABLED);
+		when(access.findAssignedEngineers(app, null, PageRequest.of(0, 2)))
+				.thenReturn(List.of(first, more));
+		when(access.findAssignedEngineers(other, engineer, PageRequest.of(0, 101)))
+				.thenReturn(List.of(otherEngineer));
+		String cursor = service.listEngineers(admin, app, null, 1).nextCursor();
+		assertEquals("other-app", service.listEngineers(admin, other, cursor, 100).items().getFirst().username());
+		verify(access).findAssignedEngineers(other, engineer, PageRequest.of(0, 101));
 	}
 }

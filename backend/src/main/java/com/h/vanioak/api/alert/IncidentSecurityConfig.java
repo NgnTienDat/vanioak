@@ -19,7 +19,8 @@ public class IncidentSecurityConfig {
 	@Bean @Order(5)
 	SecurityFilterChain incidentSecurityFilterChain(HttpSecurity http, JwtAuthenticationFilter jwt, SecurityErrorHandler errors) throws Exception {
 		var paths=PathPatternRequestMatcher.withDefaults();
-		return http.securityMatcher(new OrRequestMatcher(paths.matcher(HttpMethod.GET,"/api/v1/incidents"),paths.matcher(HttpMethod.GET,"/api/v1/incidents/{incidentId}")))
+		return http.securityMatcher(new OrRequestMatcher(paths.matcher(HttpMethod.GET,"/api/v1/incidents"),paths.matcher(HttpMethod.GET,"/api/v1/incidents/{incidentId}"),
+				paths.matcher(HttpMethod.PATCH,"/api/v1/incidents/{incidentId}/status")))
 				.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.csrf(AbstractHttpConfigurer::disable).formLogin(AbstractHttpConfigurer::disable).httpBasic(AbstractHttpConfigurer::disable)
 				.logout(AbstractHttpConfigurer::disable).requestCache(AbstractHttpConfigurer::disable)

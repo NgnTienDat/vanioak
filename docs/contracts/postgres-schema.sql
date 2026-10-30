@@ -174,6 +174,8 @@ CREATE TABLE incidents (
     first_seen_at       TIMESTAMPTZ NOT NULL,
     last_seen_at        TIMESTAMPTZ NOT NULL,
     resolved_at         TIMESTAMPTZ,
+    resolution_source   VARCHAR(20),
+    resolved_by_user_id  UUID REFERENCES users(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -188,7 +190,13 @@ CREATE TABLE incidents (
     CONSTRAINT ck_incidents_status
         CHECK (status IN ('OPEN', 'RESOLVED')),
     CONSTRAINT ck_incidents_error_count
-        CHECK (error_count >= 0)
+        CHECK (error_count >= 0),
+    CONSTRAINT ck_incidents_resolution_audit CHECK (
+        (resolution_source IS NULL AND resolved_by_user_id IS NULL)
+        OR (status = 'RESOLVED' AND resolved_at IS NOT NULL AND resolution_source IS NOT NULL
+            AND ((resolution_source = 'MANUAL' AND resolved_by_user_id IS NOT NULL)
+                 OR (resolution_source = 'AUTOMATIC' AND resolved_by_user_id IS NULL)))
+    )
 );
 
 -- Only one OPEN incident may exist for the same application/environment/fingerprint.
@@ -203,6 +211,10 @@ CREATE INDEX ix_incidents_scope_status_last_seen
 
 CREATE INDEX ix_incidents_fingerprint
     ON incidents(fingerprint);
+
+CREATE INDEX ix_incidents_manual_resolution
+    ON incidents(environment_id, fingerprint, resolved_at DESC)
+    WHERE resolution_source = 'MANUAL';
 
 -- Alert accounting receipts only: no message, metadata, or full log payload.
 -- Commit with required Incident/notification effects; retain for redelivery safety.

@@ -36,7 +36,7 @@ class IncidentSecurityTest {
 		when(api.detail(any(),eq(id))).thenReturn(new IncidentResponse(id,new IncidentResponse.Ref(app,"app"),new IncidentResponse.Ref(env,"DEV"),Level.ERROR,
 				Status.OPEN,"a".repeat(64),"message",1,Instant.EPOCH,Instant.EPOCH,null,List.of()));
 	}
-	@Test void bothHumanRolesCanReachOnlyTheTwoReadOperations() throws Exception {
+	@Test void bothHumanRolesCanReachTheTwoReadOperations() throws Exception {
 		for(String token:List.of("admin","engineer")) {
 			mvc.perform(get("/api/v1/incidents").header("Authorization","Bearer "+token)).andExpect(status().isOk());
 			mvc.perform(get("/api/v1/incidents/"+id).header("Authorization","Bearer "+token)).andExpect(status().isOk());
@@ -54,7 +54,7 @@ class IncidentSecurityTest {
 		doThrow(new IdentityException(ErrorCode.INVALID_CREDENTIALS)).when(auth).authenticateAccessToken("engineer");
 		mvc.perform(get("/api/v1/incidents/"+id).header("Authorization","Bearer engineer")).andExpect(status().isUnauthorized());verifyNoInteractions(api);
 	}
-	@Test void writesManualResolutionAndSeparateHistoryEndpointStayDenied() throws Exception {
+	@Test void otherWritesAndSeparateHistoryEndpointStayDenied() throws Exception {
 		for(var request:List.of(post("/api/v1/incidents"),patch("/api/v1/incidents/"+id),delete("/api/v1/incidents/"+id),post("/api/v1/incidents/"+id+"/resolve"),get("/api/v1/incidents/"+id+"/history")))
 			mvc.perform(request.header("Authorization","Bearer admin")).andExpect(status().isForbidden());
 		verifyNoInteractions(api);
@@ -63,4 +63,18 @@ class IncidentSecurityTest {
 		mvc.perform(get("/api/v1/alert-rules").header("Authorization","Bearer engineer").header("X-Role","ADMIN"))
 				.andExpect(status().isForbidden());verifyNoInteractions(api);
 	}
+	@Test void exactStatusPatchAdmitsBothHumanRolesAndRejectsInvalidCredentialsOrApiKeyOnly() throws Exception {
+		when(api.resolve(any(),eq(id))).thenReturn(new com.h.vanioak.api.alert.dto.IncidentStatusResponse(id,Status.RESOLVED,Instant.EPOCH,null,null));
+		for(String token:List.of("admin","engineer"))
+			mvc.perform(patch("/api/v1/incidents/"+id+"/status").header("Authorization","Bearer "+token)
+					.contentType("application/json").content("{\"status\":\"RESOLVED\"}")).andExpect(status().isOk());
+		clearInvocations(api);
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").header("X-API-Key","key")).andExpect(status().isUnauthorized());
+		doThrow(new IdentityException(ErrorCode.INVALID_CREDENTIALS)).when(auth).authenticateAccessToken("engineer");
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").header("Authorization","Bearer engineer")).andExpect(status().isUnauthorized());
+		doThrow(new IdentityException(ErrorCode.ACCESS_DENIED)).when(auth).authenticateAccessToken("engineer");
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").header("Authorization","Bearer engineer")).andExpect(status().isForbidden());
+		verifyNoInteractions(api);
+	}
+
 }

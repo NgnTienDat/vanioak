@@ -28,10 +28,15 @@ public class IncidentHistory {
 	@Column(name = "error_count", updatable = false) private Long errorCount;
 	@Column(columnDefinition = "text", updatable = false) private String message;
 	@JdbcTypeCode(SqlTypes.JSON)
-	@Column(columnDefinition = "jsonb", insertable = false, updatable = false) private Map<String,Object> metadata;
+	@Column(columnDefinition = "jsonb", updatable = false) private Map<String,Object> metadata;
 
 	IncidentHistory(IncidentEntity incident, Type type, Instant now) {
 		incidentId = incident.getId(); eventType = type; eventAt = now; errorCount = incident.getErrorCount();
 		message = type == Type.OPENED ? incident.getMessage() : null;
+		if (type == Type.RESOLVED && incident.getResolutionSource() != null)
+			metadata = incident.getResolvedByUserId() == null
+					? Map.of("resolution_source", incident.getResolutionSource().name())
+					: Map.of("resolution_source", incident.getResolutionSource().name(),
+							"resolved_by_user_id", incident.getResolvedByUserId().toString());
 	}
 }

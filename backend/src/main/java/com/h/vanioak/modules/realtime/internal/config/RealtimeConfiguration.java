@@ -6,7 +6,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import com.h.vanioak.modules.realtime.api.RealtimeFacade;
 import com.h.vanioak.modules.realtime.internal.subscription.RealtimeService;
 import com.h.vanioak.modules.realtime.internal.consumer.RealtimeReadiness;
 

@@ -118,6 +118,18 @@ The feature switch alone does not establish readiness: the exclusive consumer
 must be registered before streams are admitted. RabbitMQ consumption and its
 failure contract are deferred to the separately reviewed Realtime consumer gate.
 
+Environment aliases:
+
+| Property | Environment alias | Default |
+|---|---|---|
+| `vanioak.realtime.enabled` | `VANIOAK_REALTIME_ENABLED` | `false` |
+| `vanioak.realtime.allowed-origins` | `REALTIME_ALLOWED_ORIGINS` | empty |
+| `vanioak.realtime.fence-path` | `VANIOAK_REALTIME_FENCEPATH` | none |
+
+For local SSE testing, set `REALTIME_ALLOWED_ORIGINS=http://127.0.0.1:5500`
+when serving `realtime-test.html` from that origin. Add `http://localhost:5500`
+separately if that is the origin used by the browser. Do not use `*`.
+
 ## 6. Alerting
 
 Alert threshold/window/cooldown/resolve-after values are business configuration stored in PostgreSQL per application/environment/level, not environment variables.

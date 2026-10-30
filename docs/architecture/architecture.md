@@ -10,7 +10,7 @@ Logical modules:
 - Identity 
 - Ingestion
 - Processing 
-- Alert
+- Alert 
 - Realtime  
 - Analysis
 - Retention
@@ -28,7 +28,7 @@ flowchart LR
     MQ -->|"raw.queue"| PROC["Processing"]
     PROC -->|"batch insert"| CH[("ClickHouse")]
     PROC -->|"processed event"| MQ
-    PROC -->|"ERROR / CRITICAL"| MQ
+    PROC -->|"ERROR / CRITICAL"| MQ 
 
     MQ -->|"realtime.queue"| RT["Realtime"]
     MQ -->|"alert.queue"| AL["Alert"]

@@ -48,6 +48,7 @@ Cursor pagination is required.
 - Incident-oriented alerting.
 - Telegram notification.
 - Persisted Incidents.
+- Manual OPEN -> RESOLVED by active ADMIN/assigned ENGINEER, with audit and existing scoped SSE.
 
 ### Retention
 - All ClickHouse logs older than 7 days are removed.

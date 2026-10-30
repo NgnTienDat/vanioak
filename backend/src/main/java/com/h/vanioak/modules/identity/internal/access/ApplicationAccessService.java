@@ -1,6 +1,9 @@
 package com.h.vanioak.modules.identity.internal.access;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.UUID;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.h.vanioak.modules.identity.api.ApplicationAccessFacade;
@@ -34,6 +37,30 @@ public class ApplicationAccessService implements ApplicationAccessFacade {
 
 	private void requireAdmin(UUID actorId) {
 		if (!"ADMIN".equals(currentUser(actorId).getRole())) throw new IdentityException(ErrorCode.ACCESS_DENIED);
+	}
+
+	@Override
+	public AssignedEngineerPage listEngineers(UUID actorId, UUID applicationId, String cursor, int limit) {
+		requireAdmin(actorId);
+		if (!applications.existsById(applicationId)) throw new IdentityException(ErrorCode.APPLICATION_NOT_FOUND);
+		if (limit < 1 || limit > 100) throw new IdentityException(ErrorCode.INVALID_REQUEST);
+		UUID after = null;
+		if (cursor != null) {
+			try {
+				if (cursor.length() > 64) throw new IllegalArgumentException();
+				String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+				after = UUID.fromString(decoded);
+				if (!after.toString().equals(decoded)) throw new IllegalArgumentException();
+			} catch (IllegalArgumentException ex) {
+				throw new IdentityException(ErrorCode.INVALID_CURSOR);
+			}
+		}
+		var rows = access.findAssignedEngineers(applicationId, after, PageRequest.of(0, limit + 1));
+		var items = rows.stream().limit(limit)
+				.map(row -> new AssignedEngineer(row.getId(), row.getUsername(), row.getStatus())).toList();
+		String next = rows.size() > limit ? Base64.getUrlEncoder().withoutPadding().encodeToString(
+				items.getLast().id().toString().getBytes(StandardCharsets.UTF_8)) : null;
+		return new AssignedEngineerPage(items, next);
 	}
 
 	@Override

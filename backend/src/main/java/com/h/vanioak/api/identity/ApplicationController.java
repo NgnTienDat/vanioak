@@ -5,6 +5,8 @@ import java.security.Principal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import com.h.vanioak.modules.identity.api.ApplicationAccessFacade;
 import com.h.vanioak.api.identity.dto.ActionResponse;
+import com.h.vanioak.api.identity.dto.AssignedEngineerListResponse;
+import com.h.vanioak.api.identity.dto.AssignedEngineerListResponse.AssignedEngineerResponse;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +62,14 @@ public class ApplicationController {
 			@Valid @RequestBody UpdateApplicationRequest request) {
 		return ApiResponse.success(response(applications.update(applicationId,
 				new UpdateApplication(request.getName(), request.getDescription(), request.getStatus()))));
+	}
+
+	@GetMapping("/{applicationId}/engineers")
+	public ApiResponse<AssignedEngineerListResponse> listEngineers(Principal principal, @PathVariable UUID applicationId,
+			@RequestParam(required = false) String cursor, @RequestParam(defaultValue = "50") int limit) {
+		var page = access.listEngineers(UUID.fromString(principal.getName()), applicationId, cursor, limit);
+		return ApiResponse.success(new AssignedEngineerListResponse(page.items().stream()
+				.map(row -> new AssignedEngineerResponse(row.id(), row.username(), row.status())).toList(), page.nextCursor()));
 	}
 
 	@PostMapping("/{applicationId}/engineers/{userId}")

@@ -49,6 +49,10 @@ spring:
 # Native async failure diagnostics include raw Message bodies; application diagnostics are safe.
 logging:
   level:
+    # MVC body/argument diagnostics can contain credentials even when request details are masked.
+    web: "INFO"
+    # This fallback resolver includes rejected values in WARN exception messages.
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: "OFF"
     org.springframework.amqp.rabbit.listener.adapter.MessagingMessageListenerAdapter: "OFF"
 
 server:
@@ -91,10 +95,13 @@ vanioak:
       enabled: "${BOOTSTRAP_ADMIN_ENABLED:false}"
       username: "${BOOTSTRAP_ADMIN_USERNAME:}"
       password: "${BOOTSTRAP_ADMIN_PASSWORD:}"
+  realtime:
+    enabled: "${VANIOAK_REALTIME_ENABLED:false}"
+    allowed-origins: "${REALTIME_ALLOWED_ORIGINS:}"
+    fence-path: "${VANIOAK_REALTIME_FENCEPATH:}"
   clickhouse:
     url: "${CLICKHOUSE_URL}"
     username: "${CLICKHOUSE_USERNAME}"
     password: "${CLICKHOUSE_PASSWORD}"
     connect-timeout: "${CLICKHOUSE_CONNECT_TIMEOUT:5s}"
     request-timeout: "${CLICKHOUSE_REQUEST_TIMEOUT:5s}"
-

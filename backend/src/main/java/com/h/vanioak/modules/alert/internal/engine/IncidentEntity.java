@@ -13,6 +13,7 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import com.h.vanioak.modules.alert.api.AlertRuleFacade.Level;
+import com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -33,6 +34,8 @@ public class IncidentEntity {
 	@Column(name = "first_seen_at", nullable = false) private Instant firstSeenAt;
 	@Column(name = "last_seen_at", nullable = false) private Instant lastSeenAt;
 	@Column(name = "resolved_at") private Instant resolvedAt;
+	@Enumerated(EnumType.STRING) @Column(name = "resolution_source", length = 20) private Source resolutionSource;
+	@Column(name = "resolved_by_user_id") private UUID resolvedByUserId;
 	@Column(name = "created_at", nullable = false, updatable = false) private Instant createdAt;
 	@Column(name = "updated_at", nullable = false) private Instant updatedAt;
 
@@ -50,5 +53,13 @@ public class IncidentEntity {
 		updatedAt = now;
 	}
 
-	void resolve(Instant now) { status = Status.RESOLVED; resolvedAt = now; updatedAt = now; }
+	void resolve(Instant now) { resolve(now, Source.AUTOMATIC, null); }
+
+	void resolveManually(Instant now, UUID actor) { resolve(now, Source.MANUAL, java.util.Objects.requireNonNull(actor)); }
+
+	private void resolve(Instant now, Source source, UUID actor) {
+		if (status != Status.OPEN) return;
+		status = Status.RESOLVED; resolvedAt = now; updatedAt = now;
+		resolutionSource = source; resolvedByUserId = actor;
+	}
 }

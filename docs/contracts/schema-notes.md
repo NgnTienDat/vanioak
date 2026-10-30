@@ -35,3 +35,7 @@ ClickHouse uses `ReplacingMergeTree(processed_at)` so duplicate physical rows fo
 ## Deletion policy
 
 Applications and environments should normally be disabled rather than physically deleted, because historical ClickHouse logs may still refer to their IDs. PostgreSQL foreign keys intentionally avoid cascading deletion of applications.
+
+## Incident resolution audit
+
+V3 adds nullable resolution_source and resolved_by_user_id to incidents. MANUAL requires a user foreign key; AUTOMATIC requires no actor; attributed audit requires RESOLVED and resolved_at. OPEN has no audit. Legacy null/null is preserved without backfill or inferred provenance. Actor deletion is not cascaded. New RESOLVED history metadata records resolution_source and, for MANUAL, resolved_by_user_id. The latest manual resolution index supports the environment/fingerprint cutoff; receipts remain retained and are not reassigned/deleted by resolution.

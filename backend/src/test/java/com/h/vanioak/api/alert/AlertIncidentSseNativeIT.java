@@ -261,8 +261,16 @@ class AlertIncidentSseNativeIT {
 		private static boolean closureChain(Throwable error) {
 			var seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable,Boolean>());
 			while(error!=null) {
-				if(error.getClass()!=java.io.IOException.class || !"closed".equals(error.getMessage()) || !seen.add(error) || seen.size()>8)return false;
-				error=error.getCause();
+				if(!seen.add(error) || seen.size()>8)return false;
+				if(error.getClass()==java.io.IOException.class && "closed".equals(error.getMessage())) {
+					error=error.getCause();continue;
+				}
+				// JDK HttpClient can reach EOF while awaiting the next chunk after an intentional stop.
+				var eof=error.getCause();
+				return seen.size()>1 && seen.size()<8 && error.getClass()==java.io.IOException.class
+						&& "chunked transfer encoding, state: READING_LENGTH".equals(error.getMessage())
+						&& eof!=null && eof.getClass()==java.io.EOFException.class
+						&& "EOF reached while reading".equals(eof.getMessage()) && eof.getCause()==null;
 			}
 			return !seen.isEmpty();
 		}
