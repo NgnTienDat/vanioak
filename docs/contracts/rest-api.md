@@ -74,10 +74,25 @@ search, and alert rules are environment-scoped.
 
 | Method | Path | Access |
 |---|---|---|
+| GET | `/applications/{applicationId}/engineers` | ADMIN |
 | POST | `/applications/{applicationId}/engineers/{userId}` | ADMIN |
 | DELETE | `/applications/{applicationId}/engineers/{userId}` | ADMIN |
 
 Assignments are application-scoped and grant access to all environments of the application.
+
+The roster GET reads actual assignments and returns `data: {items, next_cursor}`.
+Each item contains only `id`, `username`, and `status` (`ACTIVE` or `DISABLED`).
+Assigned disabled Engineers and assignments on disabled applications remain visible;
+there is no status filter, environment filter or total-count field. It never grants
+access or changes roles. ENGINEER callers are forbidden even for their own applications.
+
+Items are ordered by user UUID ascending. Optional `limit` defaults to 50 and must
+be 1–100; optional `cursor` is opaque and must be repeated unchanged for the same
+application. Pagination reflects current assignments without a cross-page snapshot
+guarantee. Existing applications with no assignments return `items: []` and
+`next_cursor: null`; missing applications return `404`. Malformed application IDs,
+invalid cursors or limits return `400`; normal Bearer `401`/`403` and safe dependency
+failure envelopes apply. Existing assignment POST/DELETE semantics are unchanged.
 
 ## 5. API Keys
 
@@ -131,6 +146,7 @@ ENGINEER queries are restricted to assigned applications.
 |---|---|
 | GET | `/incidents` |
 | GET | `/incidents/{incidentId}` |
+| PATCH | `/incidents/{incidentId}/status` |
 
 ADMIN sees all incidents.
 ENGINEER sees incidents for assigned applications only.
@@ -164,3 +180,6 @@ HTTP status codes, security declarations, and payload field definitions are
 defined in `openapi.yaml`.
 
 SSE behavior is defined in `sse-api.md`.
+### Manual Incident status update
+
+PATCH /api/v1/incidents/{incidentId}/status accepts only {"status":"RESOLVED"}. Active ADMIN/assigned ENGINEER may close an existing Incident in disabled scopes too. Unknown fields/status, null/malformed input are 400; standard Bearer 401/403 applies. Missing/foreign ID is ADMIN404/ENGINEER403. Success200 returns success/message/data with id,status,resolved_at,resolution_source,resolved_by_user_id. Source is MANUAL/AUTOMATIC or null for legacy; actor is nullable except MANUAL. Duplicate requests preserve committed audit and emit no extra history/SSE. GET shapes/cursors remain unchanged; new audit is also visible in existing resolved history metadata.

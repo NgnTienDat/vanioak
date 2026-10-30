@@ -109,4 +109,28 @@ class IncidentQueryBindingTest {
 			assertEquals(3,generated.split("timestamp\\(6\\) with time zone",-1).length-1);
 		}
 	}
+	@Test void manualTargetProjectionIsScopedAndDoesNotHydrateAnIncidentBeforeLock() throws Exception {
+		var query=IncidentRepository.class.getMethod("resolutionScope",UUID.class,Set.class).getAnnotation(Query.class).value();
+		UUID id=UUID.randomUUID();
+		try(var session=factory.openSession()) {
+			assertTrue(session.createSelectionQuery(query,jakarta.persistence.Tuple.class).setParameter("id",id)
+					.setParameter("environments",Set.of(environment)).getResultList().isEmpty());
+		}
+		String generated=sql.get();assertTrue(generated.contains("environment_id") && generated.contains("fingerprint"));
+		assertFalse(generated.contains("error_count"));assertFalse(generated.contains("resolution_source"));
+		assertTrue(generated.matches(".*where .*id=\\? and .*environment_id in \\(\\?\\).*"),generated);
+		verify(statement).setObject(1,id);verify(statement).setObject(2,environment);
+	}
+	@Test void cutoffQueryUsesTypedSourceAndScopeWithoutNullableGuards() throws Exception {
+		var source=com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source.MANUAL;
+		var query=IncidentRepository.class.getMethod("latestManualResolution",UUID.class,String.class,source.getClass())
+				.getAnnotation(Query.class).value();
+		try(var session=factory.openSession()) {
+			assertTrue(session.createSelectionQuery(query,Instant.class).setParameter("env",environment)
+					.setParameter("fingerprint","a".repeat(64)).setParameter("source",source).getResultList().isEmpty());
+		}
+		String generated=sql.get();assertTrue(generated.contains("max(") && generated.contains("resolved_at"),generated);
+		assertTrue(generated.matches(".*environment_id=\\? and .*fingerprint=\\? and .*resolution_source=\\?.*"),generated);
+		assertFalse(generated.contains("is null"));verify(statement).setObject(1,environment);verify(statement).setString(3,"MANUAL");
+	}
 }

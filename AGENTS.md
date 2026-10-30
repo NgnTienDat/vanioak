@@ -6,6 +6,7 @@
 2. Read only the applicable rules under `.agents/rules/`.
 3. Use `docs/README.md` to locate authoritative project documentation.
 4. Load only documents relevant to the task; do not load the entire docs tree.
+5. For frontend tasks, also read `frontend/AGENTS.md` and `docs/frontend/DESIGN.md`; this file remains repository-wide.
 
 Project truth lives under `docs/`. The `.agents/` tree contains agent
 operating instructions, not project specifications.

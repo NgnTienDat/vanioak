@@ -25,6 +25,25 @@ import com.h.vanioak.modules.alert.api.AlertRuleFacade.Level;
 import com.h.vanioak.modules.alert.internal.rule.AlertRuleRepository;
 
 class AlertEngineInfrastructureTest {
+	@Test void auditMigrationAndCanonicalSchemaKeepNullableLegacyAndRestrictiveActorReference() throws Exception {
+		var root=java.nio.file.Path.of(System.getProperty("user.dir"));
+		while(!java.nio.file.Files.isRegularFile(root.resolve("docs/contracts/postgres-schema.sql"))) root=root.getParent();
+		var ddl=java.nio.file.Files.readString(root.resolve("docs/contracts/postgres-schema.sql"));
+		var migration=java.nio.file.Files.readString(root.resolve("backend/src/main/resources/db/migration/V3__incident_resolution_audit.sql"));
+		for(var sql:List.of(ddl,migration)) {
+			assertTrue(sql.contains("resolved_by_user_id") && sql.contains("REFERENCES users(id)"));
+			assertTrue(sql.contains("resolution_source IS NULL AND resolved_by_user_id IS NULL"));
+			assertTrue(sql.contains("status = 'RESOLVED' AND resolved_at IS NOT NULL AND resolution_source IS NOT NULL"));
+			assertTrue(sql.contains("resolution_source = 'MANUAL' AND resolved_by_user_id IS NOT NULL"));
+			assertTrue(sql.contains("resolution_source = 'AUTOMATIC' AND resolved_by_user_id IS NULL"));
+			assertTrue(sql.replaceAll("\\s+"," ").contains("ON incidents(environment_id, fingerprint, resolved_at DESC) WHERE resolution_source = 'MANUAL'"));
+		}
+		assertFalse(migration.matches("(?is).*\\b(UPDATE|DELETE|DROP|CASCADE)\\b.*"));
+		assertTrue(ddl.contains("CREATE UNIQUE INDEX ux_incidents_open_fingerprint"));
+		assertEquals("resolution_source",IncidentEntity.class.getDeclaredField("resolutionSource").getAnnotation(jakarta.persistence.Column.class).name());
+		var metadata=IncidentHistory.class.getDeclaredField("metadata").getAnnotation(jakarta.persistence.Column.class);
+		assertTrue(metadata.insertable());assertFalse(metadata.updatable());
+	}
 	@Test void fingerprintMappingsMatchExistingChar64Schema() throws Exception {
 		for(var type:List.of(IncidentEntity.class,AlertEventReceipt.class)) {
 			var field=type.getDeclaredField("fingerprint");

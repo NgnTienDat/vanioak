@@ -26,7 +26,8 @@ class IncidentApiServiceTest {
 	final IncidentReadFacade reads=mock(IncidentReadFacade.class);
 	final ApplicationFacade apps=mock(ApplicationFacade.class);
 	final ApplicationAccessFacade access=mock(ApplicationAccessFacade.class);
-	final IncidentApiService api=new IncidentApiService(reads,apps,access);
+	final com.h.vanioak.modules.alert.api.IncidentResolutionFacade resolutions=mock(com.h.vanioak.modules.alert.api.IncidentResolutionFacade.class);
+	final IncidentApiService api=new IncidentApiService(reads,apps,access,resolutions);
 	final UUID actor=UUID.randomUUID(),app=UUID.randomUUID(),env=UUID.randomUUID(),otherApp=UUID.randomUUID(),otherEnv=UUID.randomUUID(),id=UUID.randomUUID();
 	final Authentication engineer=auth("ENGINEER"),admin=auth("ADMIN");
 	final IncidentReadFacade.Filters filters=new IncidentReadFacade.Filters(null,null,null,null,null,50);
@@ -39,6 +40,26 @@ class IncidentApiServiceTest {
 	@BeforeEach void setup() {
 		when(apps.list(actor,null,null,100)).thenReturn(new ApplicationFacade.ApplicationPage(List.of(application(app,env)),null));
 		when(reads.list(any(),any())).thenReturn(new IncidentReadFacade.Page(List.of(item(env)),null));
+	}
+
+
+	@Test void manualResolutionUsesOnlyServerVisibleDisabledScopeAndAuthenticatedActor() {
+		var state=new com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Resolution(id,IncidentReadFacade.Status.RESOLVED,
+				Instant.EPOCH,com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source.MANUAL,actor);
+		when(resolutions.resolve(any(),eq(id))).thenReturn(Optional.of(state));
+		for(var caller:List.of(engineer,admin)) {
+			var result=api.resolve(caller,id);assertEquals(actor,result.resolvedByUserId());assertEquals(id,result.id());
+		}
+		var capture=ArgumentCaptor.forClass(IncidentReadFacade.Scope.class);verify(resolutions,times(2)).resolve(capture.capture(),eq(id));
+		for(var scoped:capture.getAllValues()) {assertEquals(Set.of(env),scoped.environmentIds());assertEquals(actor,scoped.actorId());}
+		verifyNoInteractions(reads);
+	}
+	@Test void manualMissingAndForeignIdsPreserveMaskingAndMetadataFailureIsClosed() {
+		when(resolutions.resolve(any(),eq(id))).thenReturn(Optional.empty());
+		assertEquals(ErrorCode.ACCESS_DENIED,assertThrows(AlertException.class,() -> api.resolve(engineer,id)).getErrorCode());
+		assertEquals(ErrorCode.INCIDENT_NOT_FOUND,assertThrows(AlertException.class,() -> api.resolve(admin,id)).getErrorCode());
+		clearInvocations(resolutions);when(apps.list(actor,null,null,100)).thenThrow(new IllegalStateException("unavailable"));
+		assertThrows(IllegalStateException.class,() -> api.resolve(engineer,id));verifyNoInteractions(resolutions);
 	}
 
 	@Test void engineerScopeComesFromMembershipIncludingDisabledHistoricalData() {

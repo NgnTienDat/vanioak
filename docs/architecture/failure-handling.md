@@ -141,3 +141,7 @@ SSE failure does not stop ingestion or persistence. Clients reconnect, and histo
 ## 9. MVP Non-Goals
 
 No distributed transactions, exactly-once delivery, local durable spool, Kubernetes self-healing, multi-region failover, or cross-region replication in MVP.
+
+### Manual Incident resolution serialization
+
+Manual resolution shares Alert's environment/fingerprint advisory transaction lock with evaluation and automatic resolution. Use a scalar target projection before waiting, load the Incident fresh after the lock, and delegate current actor/scope checks to Identity before any mutation or duplicate response. Commit status/audit/history together; rollback emits nothing, successful commit registers the existing best-effort resolved event. First committed resolution wins; retries do not rewrite audit or emit another event. After a manual cutoff, stale unseen events remain durably accounted and reconciled in Redis but cannot open or update a new Incident. No ACK/dedup/retry rules change.

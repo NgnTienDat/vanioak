@@ -8,9 +8,11 @@ import java.util.UUID;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import com.h.vanioak.api.alert.dto.IncidentResponse;
+import com.h.vanioak.api.alert.dto.IncidentStatusResponse;
 import com.h.vanioak.modules.alert.api.AlertException;
 import com.h.vanioak.modules.alert.api.ErrorCode;
 import com.h.vanioak.modules.alert.api.IncidentReadFacade;
+import com.h.vanioak.modules.alert.api.IncidentResolutionFacade;
 import com.h.vanioak.modules.identity.api.ApplicationAccessFacade;
 import com.h.vanioak.modules.identity.api.ApplicationFacade;
 import com.h.vanioak.modules.identity.api.IdentityException;
@@ -21,6 +23,15 @@ public class IncidentApiService {
 	private final IncidentReadFacade incidents;
 	private final ApplicationFacade applications;
 	private final ApplicationAccessFacade access;
+	private final IncidentResolutionFacade resolutions;
+
+	public IncidentStatusResponse resolve(Authentication caller, UUID id) {
+		var authorized = authorize(caller, null, null);
+		var resolved = resolutions.resolve(authorized.scope(), id).orElseThrow(() -> new AlertException(
+				authorized.admin() ? ErrorCode.INCIDENT_NOT_FOUND : ErrorCode.ACCESS_DENIED));
+		return new IncidentStatusResponse(resolved.id(), resolved.status(), resolved.resolvedAt(),
+				resolved.resolutionSource(), resolved.resolvedByUserId());
+	}
 
 	public IncidentResponse.Page list(Authentication caller, UUID app, UUID env, IncidentReadFacade.Filters filters) {
 		var authorized=authorize(caller,app,env);

@@ -28,6 +28,7 @@ public class RealtimeController {
 			@RequestParam(value = "application_id", required = false) UUID applicationId,
 			@RequestParam(value = "environment_id", required = false) UUID environmentId,
 			@RequestParam(value = "level", required = false) String level) {
+				
 		RealtimeSseConnection connection = new RealtimeSseConnection();
 		var subscription = service.open(caller, authorization, applicationId, environmentId, level, connection);
 		connection.bind(subscription);

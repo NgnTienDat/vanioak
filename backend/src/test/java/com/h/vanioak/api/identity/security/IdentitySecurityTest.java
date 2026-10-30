@@ -359,4 +359,27 @@ class IdentitySecurityTest {
         verifyNoInteractions(applicationAccess);
     }
 
+	@Test
+	void assignedEngineerRosterRequiresAdminEvenForAnAssignedEngineer() throws Exception {
+		UUID applicationId = UUID.randomUUID();
+		String path = "/api/v1/applications/" + applicationId + "/engineers";
+		when(applicationAccess.listEngineers(userId, applicationId, null, 50)).thenReturn(
+				new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.AssignedEngineerPage(List.of(), null));
+		mvc.perform(get(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.success").value(true));
+		when(user.getRole()).thenReturn("ENGINEER");
+		failure(mvc.perform(get(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + token)), 403, "Access denied");
+		verify(applicationAccess, times(1)).listEngineers(userId, applicationId, null, 50);
+	}
+
+	@Test
+	void assignedEngineerRosterRejectsAnonymousInvalidBearerAndDisabledAdminBeforeFacade() throws Exception {
+		String path = "/api/v1/applications/" + UUID.randomUUID() + "/engineers";
+		failure(mvc.perform(get(path)), 401, "Invalid credentials");
+		failure(mvc.perform(get(path).header(HttpHeaders.AUTHORIZATION, "Bearer invalid")), 401, "Invalid credentials");
+		when(user.getStatus()).thenReturn(Status.DISABLED);
+		failure(mvc.perform(get(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + token)), 403, "Access denied");
+		verifyNoInteractions(applicationAccess, applications);
+	}
+
 }

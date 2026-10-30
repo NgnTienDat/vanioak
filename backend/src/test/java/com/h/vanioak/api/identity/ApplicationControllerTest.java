@@ -138,5 +138,42 @@ class ApplicationControllerTest {
             .andExpect(jsonPath("$.success").value(false));verifyNoInteractions(access);
     }
 
+	@Test void rosterUsesMinimalFieldsAndOpaquePaginationParameters() throws Exception {
+		var active = new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.AssignedEngineer(UUID.randomUUID(), "engineer", com.h.vanioak.modules.identity.api.UserFacade.Status.ACTIVE);
+		var disabled = new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.AssignedEngineer(UUID.randomUUID(), "disabled", com.h.vanioak.modules.identity.api.UserFacade.Status.DISABLED);
+		when(access.listEngineers(id, id, "opaque", 2)).thenReturn(new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.AssignedEngineerPage(List.of(active, disabled), "next"));
+		mvc.perform(get("/api/v1/applications/" + id + "/engineers").param("cursor", "opaque").param("limit", "2"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.*", hasSize(3)))
+				.andExpect(jsonPath("$.success").value(true)).andExpect(jsonPath("$.message").value("Success"))
+				.andExpect(jsonPath("$.data.*", hasSize(2))).andExpect(jsonPath("$.data.items", hasSize(2)))
+				.andExpect(jsonPath("$.data.items[0].*", hasSize(3))).andExpect(jsonPath("$.data.items[1].*", hasSize(3)))
+				.andExpect(jsonPath("$.data.items[0].id").value(active.id().toString()))
+				.andExpect(jsonPath("$.data.items[0].username").value("engineer"))
+				.andExpect(jsonPath("$.data.items[0].status").value("ACTIVE"))
+				.andExpect(jsonPath("$.data.items[1].status").value("DISABLED"))
+				.andExpect(jsonPath("$.data.items[0].password_hash").doesNotExist())
+				.andExpect(jsonPath("$.data.items[0].role").doesNotExist())
+				.andExpect(jsonPath("$.data.next_cursor").value("next"))
+				.andExpect(jsonPath("$.data.nextCursor").doesNotExist());
+		verify(access).listEngineers(id, id, "opaque", 2);
+	}
+
+	@Test void rosterDefaultLimitEmptyResultAndMissingApplicationKeepStandardEnvelope() throws Exception {
+		String route = "/api/v1/applications/" + id + "/engineers";
+		when(access.listEngineers(id, id, null, 50)).thenReturn(new com.h.vanioak.modules.identity.api.ApplicationAccessFacade.AssignedEngineerPage(List.of(), null));
+		mvc.perform(get(route)).andExpect(status().isOk()).andExpect(jsonPath("$.data.items", hasSize(0)))
+				.andExpect(jsonPath("$.data.next_cursor").value(org.hamcrest.Matchers.nullValue()));
+		when(access.listEngineers(id, id, null, 50)).thenThrow(new IdentityException(ErrorCode.APPLICATION_NOT_FOUND));
+		mvc.perform(get(route)).andExpect(status().isNotFound()).andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.message").value("Application not found"))
+				.andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
+	}
+
+	@Test void malformedRosterPathOrLimitDoesNotReachFacade() throws Exception {
+		mvc.perform(get("/api/v1/applications/not-a-uuid/engineers")).andExpect(status().isBadRequest());
+		mvc.perform(get("/api/v1/applications/" + id + "/engineers").param("limit", "not-an-integer")).andExpect(status().isBadRequest());
+		verifyNoInteractions(access);
+	}
+
 }
 

@@ -17,7 +17,7 @@ import com.h.vanioak.modules.realtime.internal.consumer.RealtimeRecoveryFence;
 import com.h.vanioak.modules.realtime.internal.subscription.RealtimeService;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = "vanioak.realtime.enabled", havingValue = "true")
+@ConditionalOnProperty(name = "vanioak.realtime.enabled", havingValue = "true", matchIfMissing = true)
 public class RealtimeConsumerConfiguration {
 	@Bean(destroyMethod = "close")
 	RealtimeFailurePublisher realtimeFailurePublisher(ConnectionFactory connection) {

@@ -18,6 +18,15 @@ import com.h.vanioak.modules.alert.api.AlertException;
 import com.h.vanioak.modules.alert.api.AlertRuleFacade.Level;
 
 class AlertEngineServiceTest {
+	@Test void automaticOnlyResolutionDoesNotIntroduceManualCutoffForLateEvents() {
+		s.configure(1,60,5,true);var first=s.engine.evaluate(event(0)).incidentId();
+		s.clock.time.set(base.plusSeconds(5));assertEquals(1,s.engine.resolveInactive(100));
+		assertEquals(com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source.AUTOMATIC,s.committedIncidents.get(first).getResolutionSource());
+		assertNull(s.committedIncidents.get(first).getResolvedByUserId());
+		var fresh=s.engine.evaluate(event(6));assertNotEquals(first,fresh.incidentId());
+		assertEquals(Decision.UPDATED,s.engine.evaluate(event(4)).decision());
+		assertEquals(2,s.committedIncidents.get(fresh.incidentId()).getErrorCount());
+	}
 	final EngineTestStore s = new EngineTestStore();
 	final Instant base = s.clock.instant();
 	CriticalEvent event(long seconds) { return new CriticalEvent(UUID.randomUUID(), s.env, Level.ERROR, "Database timeout", base.plusSeconds(seconds)); }

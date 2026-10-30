@@ -79,4 +79,32 @@ class IncidentControllerTest {
 		doThrow(new AlertException(ErrorCode.INCIDENT_NOT_FOUND)).when(api).detail(caller,id);
 		mvc.perform(get("/api/v1/incidents/"+id)).andExpect(status().isNotFound());
 	}
+	@Test void manualStatusPatchUsesStandardEnvelopeAndAudit() throws Exception {
+		when(api.resolve(caller,id)).thenReturn(new com.h.vanioak.api.alert.dto.IncidentStatusResponse(id,Status.RESOLVED,Instant.EPOCH,
+				com.h.vanioak.modules.alert.api.IncidentResolutionFacade.Source.MANUAL,actor));
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").contentType("application/json").content("{\"status\":\"RESOLVED\"}"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.*",hasSize(3))).andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.data.*",hasSize(5))).andExpect(jsonPath("$.data.id").value(id.toString()))
+				.andExpect(jsonPath("$.data.status").value("RESOLVED")).andExpect(jsonPath("$.data.resolved_at").value(Instant.EPOCH.toString()))
+				.andExpect(jsonPath("$.data.resolution_source").value("MANUAL")).andExpect(jsonPath("$.data.resolved_by_user_id").value(actor.toString()));
+		verify(api).resolve(caller,id);
+	}
+	@Test void manualPatchRejectsEveryUnsupportedOrSpoofedBodyBeforeService() throws Exception {
+		for(var body:List.of("{}","null","[]","{\"status\":null}","{\"status\":1}","{\"status\":true}",
+				"{\"status\":\"OPEN\"}","{\"status\":\"IN_PROGRESS\"}","{\"status\":\"resolved\"}",
+				"{\"status\":\"RESOLVED\",\"resolved_by_user_id\":\""+actor+"\"}","{\"status\":\"RESOLVED\",\"unknown\":null}","{"))
+			mvc.perform(patch("/api/v1/incidents/"+id+"/status").contentType("application/json").content(body)).andExpect(status().isBadRequest());
+		mvc.perform(patch("/api/v1/incidents/bad/status").contentType("application/json").content("{\"status\":\"RESOLVED\"}")).andExpect(status().isBadRequest());
+		verifyNoInteractions(api);
+	}
+	@Test void legacyResolutionResponsePreservesNullAuditAndDenialEnvelope() throws Exception {
+		when(api.resolve(caller,id)).thenReturn(new com.h.vanioak.api.alert.dto.IncidentStatusResponse(id,Status.RESOLVED,Instant.EPOCH,null,null));
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").contentType("application/json").content("{\"status\":\"RESOLVED\"}"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.*",hasSize(5)))
+				.andExpect(jsonPath("$.data.resolution_source").value(org.hamcrest.Matchers.nullValue()));
+		doThrow(new AlertException(ErrorCode.ACCESS_DENIED)).when(api).resolve(caller,id);
+		mvc.perform(patch("/api/v1/incidents/"+id+"/status").contentType("application/json").content("{\"status\":\"RESOLVED\"}"))
+				.andExpect(status().isForbidden()).andExpect(jsonPath("$.success").value(false));
+	}
+
 }

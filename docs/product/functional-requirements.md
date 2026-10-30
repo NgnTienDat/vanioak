@@ -412,3 +412,7 @@ Log Error Rate =
 ```
 
 > Log Error Rate represents the percentage of error-level log records among all log records. It is not the HTTP/request error rate of the monitored application.
+
+### FR06 manual resolution extension
+
+Active ADMIN and assigned active ENGINEER may resolve an existing OPEN Incident through PATCH /api/v1/incidents/{incidentId}/status with status RESOLVED, including disabled scopes. Preserve manual actor/source/time audit and one lifecycle transition; duplicates are no-ops. Follow Alert's scope lock/manual cutoff semantics and existing after-commit resolved SSE contract. No other status, manual reopening or reassignment is introduced.

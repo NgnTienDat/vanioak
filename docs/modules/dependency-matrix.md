@@ -5,7 +5,7 @@
 | Identity | R/W | - | R/W | - | self | - |
 | Ingestion | - | - | local/indirect | Publish | Call | - |
 | Processing | - | Write | - | Consume/Publish | - | - |
-| Alert | R/W | - | R/W | Consume | Read-only environment-parent metadata | Send |
+| Alert | R/W | - | R/W | Consume | Environment metadata; delegated manual-resolution authorization | Send |
 | Realtime | - | - | - | Consume | Authorization | - |
 | Analysis | - | Read | optional | - | - | - |
 | Retention | - | Read TTL metadata; native TTL deletes | - | - | - | - |
@@ -28,3 +28,5 @@
 - Realtime must not be required for data durability.
 - Analysis must not be in the ingestion critical path.
 - Retention must not block normal log processing.
+
+- Manual Incident resolution delegates current actor/assignment/scope checks through public ApplicationAccessFacade and EnvironmentScopeFacade after the Alert scope lock. Disabled scopes may be closed by an otherwise authorized active actor. No Identity internal/repository access is permitted.

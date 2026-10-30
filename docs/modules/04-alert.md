@@ -61,3 +61,9 @@ Telegram uses the single deployment destination defined in [Configuration](../op
 - Must not own user authentication.
 - Must not make application authorization decisions.
 - Must not silently discard a critical event.
+
+## Manual Incident resolution
+
+Active ADMIN and active assigned ENGINEER may manually resolve an existing Incident, including disabled application/environment scopes. Alert delegates current access verification to Identity's public API after acquiring its existing scope transaction lock; it does not own role/assignment policy. OPEN -> RESOLVED commits status, server microsecond resolved_at, MANUAL source, actor UUID and one RESOLVED history atomically. Already RESOLVED is an authorized no-op preserving prior audit/history. New automatic resolutions record AUTOMATIC source and no actor; legacy audit remains null.
+
+For an enabled-rule unseen event, use the latest MANUAL resolved_at in the environment/fingerprint as a cutoff. received_at <= cutoff still produces durable receipt accounting and normal all-window Redis reconciliation, but cannot open or modify any Incident, including a new OPEN row. Opening eligibility includes only unassigned window receipts strictly after cutoff; a fresh threshold creates a new Incident ID. Duplicates and automatic-only scopes retain existing semantics. Manual commands do not mutate receipts, Redis, rules or notifications. Reuse existing afterCommit best-effort incident.resolved publication without wire changes.
